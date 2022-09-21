@@ -1,35 +1,38 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-def object_id_from_file_name(wc):
-    row = samples.loc[samples['file_name'] == wc.file_name]
-    return {
-        'obj_id': row['object_id'].values[0].split('/')[1],
-        'md5sum': row['md5sum'].values[0],
-    }
-
+#given a sample_id, return the filecode
+def find_column(sample_file_path,col_name,sep = "\t", header = 0):
+    sample_file = pd.read_csv(sample_file_path, sep = sep, header = header)
+    return(sample_file.columns.get_loc(col_name)
 
 rule download_bam_gtex:
+    input:
+        table_file = "/athena/nixonlab/scratch/tof4003/test_gdc.txt"
+        token = "/home/tof4003/gdc_token_092022.txt"
     output:
-        temp('results/original_bam/{file_name}')
+        temp('../results/original_bam/{sample_id}.bam')
     params:
-        object_id_from_file_name,
+        id_col = find_column("{input.table_file}","File ID")
+        sample_col = find_column("{input.table_file}","Sample ID")
+    config:
+        "../envs/gdc.yaml"
     shell:
         '''
-resources/gen3-client download-single\
-  --no-prompt\
-  --skip-completed\
-  --profile=bendall\
-  --protocol=s3\
-  --download-path results/original_bam\
-  --guid={params[0][obj_id]}
-  
-  echo "{params[0][md5sum]}  {output[0]}" | md5sum -c -
+        while read line; do
+        echo "Started"
+        sample=$(awk -F "\t" '{print ${params.sample_col}}' <<< $line)
+        fid=$(awk -F "\t" '{print ${params.id_col}}' <<< $line)
+        gdc-client download $fid \
+        --latest \
+        -t "{input.token}" 
+        mv $fid/$fid.rna_seq.transcriptome.gdc_realn.bam ../results/original_bam/$sample.bam
+        rm -r $fid < {input.table_file}
         '''
 
-def original_bam_from_sample_id(wc):
-    row = samples.loc[wc.sample_id]
-    return os.path.join('results', 'original_bam', row['file_name'])
+#def original_bam_from_sample_id(wc):
+    #row = samples.loc[wc.sample_id]
+    #return os.path.join('results', 'original_bam', row['sample ID'],)
 
 
 # Default SAM attributes cleared by RevertSam
@@ -45,9 +48,9 @@ ALN_ATTRIBUTES = list(set(attr_add) - set(attr_revertsam))
 
 rule original_bam_to_ubam:
     input:
-        original_bam_from_sample_id
+        '../results/original_bam/{sample_id}.bam'
     output:
-        'results/ubam/{sample_id}.bam'
+        '../results/ubam/{sample_id}.bam'
     log:
         "logs/revert_bam.{sample_id}.log",
         "logs/mark_adapters.{sample_id}.log",

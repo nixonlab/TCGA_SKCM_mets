@@ -17,7 +17,7 @@ include: "rules/stringtie.smk"
 
 localrules: sample_download
 rule sample_download:
-    input: revert_and_mark_adapters.output
+    input: rules.revert_and_mark_adapters.output
 
 localrules: sample_complete
 rule sample_complete:

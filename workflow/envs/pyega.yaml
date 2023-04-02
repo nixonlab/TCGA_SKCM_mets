@@ -1,7 +1,7 @@
-name: picard
+name: pyega
 channels:
   - bioconda
   - conda-forge
   - defaults
 dependencies:
-  - picard-slim
+  - pyega3

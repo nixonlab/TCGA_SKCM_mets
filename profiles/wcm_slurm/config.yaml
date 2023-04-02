@@ -1,8 +1,10 @@
-config: tmpdir="/scratch"
+config: tmpdir="/athena/nixonlab/scratch/tof4003/UM_mets_tmp"
 cluster:
     sbatch {cluster.args} 
         --partition={cluster.partition}
         --ntasks={cluster.ntasks}
+        --time=72:00:00
+        --exclude=node160
         --cpus-per-task={cluster.cpus-per-task}
         --output={cluster.output}
         --job-name={cluster.job-name}

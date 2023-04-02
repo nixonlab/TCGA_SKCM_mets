@@ -3,24 +3,17 @@
 from snakemake.utils import min_version
 import os
 import pandas as pd
+import re
 
 min_version("6.4.1")
 
 configfile: "config/config.yaml"
 
 include: "rules/common.smk"
-include: "rules/download_bam.smk"
-include: "rules/make_ubam.smk"
-# include: "rules/align_star.smk"
-# include: "rules/telescope.smk"
-# include: "rules/stringtie.smk"
-
-localrules: download_convert
-rule download_covert:
-    input:
-        "resources/sample_table.tsv"
-    output:
-        "results/ubam/{sample_id}.bam"
+include: "rules/download_and_make_ubam.smk"
+include: "rules/align_star.smk"
+include: "rules/telescope.smk"
+include: "rules/stringtie.smk"
 
 localrules: sample_complete
 rule sample_complete:
@@ -33,10 +26,5 @@ rule sample_complete:
 
 localrules: all
 rule all:
-    input:
-        expand("results/complete/{s}.txt", s=list(samples.index))
-
-localrules: msk
-rule msk:
     input:
         expand("results/complete/{s}.txt", s=list(samples.index))

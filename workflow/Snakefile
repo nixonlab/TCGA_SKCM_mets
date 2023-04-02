@@ -17,7 +17,7 @@ include: "rules/stringtie.smk"
 
 localrules: sample_download
 rule sample_download:
-    input: rules.download_bam_tcga.output
+    input: rules.make_tcga_ubams.output
 
 localrules: sample_complete
 rule sample_complete:

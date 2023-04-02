@@ -17,9 +17,8 @@ include: "rules/stringtie.smk"
 
 localrules: sample_download
 rule sample_download:
-    input: rules.make_tcga_ubams.output
-    output:
-        touch("logs/sample_download/{sample_id}.txt")
+    input:
+        expand("results/ubam/{sample_id}.bam", s=list(samples.index))
 
 localrules: sample_complete
 rule sample_complete:

@@ -17,7 +17,9 @@ include: "rules/stringtie.smk"
 
 localrules: sample_download
 rule sample_download:
-    input: rules.revert_and_mark_adapters.output
+    input: rules.make_tcga_ubams.output
+    output:
+        touch("logs/sample_download/{sample_id}.txt")
 
 localrules: sample_complete
 rule sample_complete:

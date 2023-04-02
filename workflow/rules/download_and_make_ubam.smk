@@ -14,6 +14,8 @@ rule download_bam_tcga:
     wildcard_constraints:
         sample_id = "TCGA\\-..\\-[A-Z]...\\-..[A-Z]"
     threads: 4
+    resources:
+        tmpdir = config['tmp']
     shell:
         '''
 mkdir -p results

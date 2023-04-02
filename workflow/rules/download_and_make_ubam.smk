@@ -15,7 +15,8 @@ rule download_bam_tcga:
         sample_id = "TCGA\\-..\\-[A-Z]...\\-..[A-Z]"
     threads: 4
     resources:
-        tmpdir = config['tmp']
+        tmpdir = config['tmp'],
+        mem_mb = 100000
     shell:
         '''
 mkdir -p results

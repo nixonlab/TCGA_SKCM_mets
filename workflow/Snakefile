@@ -10,11 +10,17 @@ configfile: "config/config.yaml"
 
 include: "rules/common.smk"
 include: "rules/download_bam.smk"
-# include: "rules/make_ubam.smk"
+include: "rules/make_ubam.smk"
 # include: "rules/align_star.smk"
 # include: "rules/telescope.smk"
 # include: "rules/stringtie.smk"
 
+localrules: download_convert
+rule download_covert:
+    input:
+        "resources/sample_table.tsv"
+    output:
+        "results/ubam/{sample_id}.bam"
 
 localrules: sample_complete
 rule sample_complete:

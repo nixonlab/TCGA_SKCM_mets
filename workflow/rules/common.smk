@@ -1,13 +1,14 @@
 #! /usr/bin/env python
 # -*- coding: utf-8 -*-
 
-#given a sample file, return the list of samples
-def file_to_list(input_file,sep = "\t"):
-    sample_file = pd.read_csv(input_file, sep = sep, header = 0)
-    return(sample_file['Sample ID'])
+#read in the metadata, and pharse into sample 
+gdc_file = pd.read_csv(config['tcga_metadata'],header = 0)
+gdc_file.set_index(config['tcga_sample_id'],inplace = True, drop = False)
+tcga_samples = gdc_file[config['tcga_sample_id']].unique().tolist()
 
-sample_id = file_to_list("../test_table.tsv", sep = "\t")
+""" All samples """
+samples = pd.DataFrame(
+        {'sample_id': tcga_samples}).set_index("sample_id", drop=False)
 
-samples = pd.read_csv("../test_table.tsv", sep = "\t", header = 0).set_index('Sample ID', inplace = True, replace = False)
 
 

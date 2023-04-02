@@ -16,6 +16,8 @@ rule download_bam_tcga:
     threads: 4
     shell:
         '''
+mkdir -p results
+mkdir -p results/original_bam
 token=$(cat {input[0]})
 curl -H "X-Auth-Token: $token"\
  -o {output[0]} -s\

@@ -4,5 +4,4 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - htslib >=1.14
   - stringtie ==2.2.1

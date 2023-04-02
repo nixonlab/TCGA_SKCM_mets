@@ -17,7 +17,7 @@ include: "rules/stringtie.smk"
 
 localrules: sample_download
 rule sample_download:
-    input: rules.make_tcga_ubams.output
+    input: revert_and_mark_adapters.output
 
 localrules: sample_complete
 rule sample_complete:

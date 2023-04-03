@@ -42,8 +42,6 @@ rule revert_and_mark_adapters:
         "results/original_bam/{sample_id}.bam"
     output:
         "results/ubam/{sample_id}.bam"
-    log:
-        "logs/ubam/{sample_id}.revert_bam.log"
     wildcard_constraints:
         sample_id = "TCGA\\-..\\-[A-Z]...\\-..[A-Z]"
     conda:

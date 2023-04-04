@@ -19,15 +19,22 @@ localrules: sample_download
 rule sample_download:
     input:
         expand("results/ubam/{sample_id}.bam", sample_id=list(samples.index))
-
+""""
+when job completed, remove the ubam to save space
+""""
 localrules: sample_complete
 rule sample_complete:
     input:
         "results/align_multi/{sample_id}/Aligned.out.cram",
         rules.telescope.output,
-        rules.stringtie.output
+        rules.stringtie.output,
+        rules.sample_download.output
     output:
         touch("results/complete/{sample_id}.txt")
+    shell:
+        '''
+rm input[3]
+        '''       
 
 localrules: all
 rule all:

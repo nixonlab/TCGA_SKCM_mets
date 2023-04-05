@@ -19,9 +19,7 @@ localrules: sample_download
 rule sample_download:
     input:
         expand("results/ubam/{sample_id}.bam", sample_id=list(samples.index))
-""""
-when job completed, remove the ubam to save space
-""""
+## when job completed, remove the ubam to save space
 localrules: sample_complete
 rule sample_complete:
     input:

@@ -19,7 +19,14 @@ localrules: sample_download
 rule sample_download:
     input:
         expand("results/ubam/{sample_id}.bam", sample_id=list(samples.index))
+
 ## when job completed, remove the ubam to save space
+localrules: star_complete
+rule star_complete:
+    input:
+        expand("results/align_multi/{sample_id}/ReadsPerGene.out.tab", sample_id=list(samples.index)),
+        expand("results/align_multi/{sample_id}/Aligned.out.bam", sample_id=list(samples.index))
+
 localrules: sample_complete
 rule sample_complete:
     input:

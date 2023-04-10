@@ -73,4 +73,9 @@ samtools sort -u -@ {threads} -T $tdir {input.bam} | samtools view -C -T {input.
 samtools index {output[0]}
         '''
 
+localrules: star_alignment
+rule star_alignment:
+    input:
+        expand("results/align_multi/{sample_id}/ReadsPerGene.out.tab", sample_id=tcga_samples),
+        expand("results/align_multi/{sample_id}/Aligned.out.bam", sample_id=tcga_samples)
 

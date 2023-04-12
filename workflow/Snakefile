@@ -24,9 +24,9 @@ rule sample_download:
 localrules: star_align
 rule star_complete:
     input:
-        expand("results/align_multi/{sample_id}/ReadsPerGene.out.tab"),
-        expand("results/align_multi/{sample_id}/Aligned.out.bam"),
-        expand("results/ubam/{sample_id}.bam")
+        "results/align_multi/{sample_id}/ReadsPerGene.out.tab",
+        "results/align_multi/{sample_id}/Aligned.out.bam",
+        "results/ubam/{sample_id}.bam"
     output:
         touch("results/complete/{sample_id}_star_align.txt")
     shell:
@@ -37,7 +37,7 @@ rm input[2]
 localrules: star_complete
 rule star_complete:
     input:
-        expand("results/complete/{sample_id}_star_align.txt", s=list(samples.index))
+        expand("results/complete/{s}_star_align.txt", s=list(samples.index))
 
 localrules: sample_complete
 rule sample_complete:

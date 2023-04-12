@@ -31,7 +31,7 @@ rule star_align:
         touch("results/complete/{sample_id}_star_align.txt")
     shell:
         '''
-rm input[2]
+rm {input[2]}
         '''               
 
 localrules: star_complete

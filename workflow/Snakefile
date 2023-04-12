@@ -25,8 +25,8 @@ localrules: star_align
 rule star_align:
     input:
         "results/align_multi/{sample_id}/ReadsPerGene.out.tab",
-        "results/align_multi/{sample_id}/Aligned.out.bam",
-        "results/ubam/{sample_id}.bam"
+        "results/align_multi/{sample_id}/Aligned.sortedByCoord.out.cram",
+        "results/ubam/{sample_id}.bam",
     output:
         touch("results/complete/{sample_id}_star_align.txt")
     shell:

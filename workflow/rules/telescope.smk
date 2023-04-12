@@ -3,12 +3,15 @@
 
 rule telescope:
     input:
-        mbam = "results/align_multi/{sample_id}/Aligned.out.bam",
+        cram = "results/align_multi/{sample_id}/Aligned.out.cram",
+        ref = config['genome_fasta'],
         annot = config['telescope']['annotation']
     output:
         "results/telescope/{sample_id}/report.tsv",
         "results/telescope/{sample_id}/updated.bam",
         "results/telescope/{sample_id}/other.bam"
+    params:
+        bam = "results/align_multi/{sample_id}/Aligned.out.bam"
     log:
         "results/telescope/{sample_id}/telescope.log"        
     conda:
@@ -16,6 +19,7 @@ rule telescope:
     shell:
         '''
 tdir=$(mktemp -d {config[tmpdir]}/{rule}.{wildcards.sample_id}.XXXXXX)
+samtools view -b {input.cram} {input.ref} -o {params.bam}
 
 telescope assign\
  --exp_tag inform\
@@ -23,7 +27,7 @@ telescope assign\
  --max_iter 1000\
  --updated_sam\
  --outdir $tdir\
- {input.mbam}\
+ {params.bam}\
  {input.annot}\
  2>&1 | tee {log[0]}
 
@@ -34,6 +38,7 @@ mv $tdir/inform-other.bam {output[2]}
 
 chmod 600 {output[1]}
 rm -rf $tdir
+rm {params.bam}
         '''
 
 # rule telescope_edge:

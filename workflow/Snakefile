@@ -25,21 +25,23 @@ localrules: star_complete
 rule star_complete:
     input:
         expand("results/align_multi/{sample_id}/ReadsPerGene.out.tab", sample_id=list(samples.index)),
-        expand("results/align_multi/{sample_id}/Aligned.out.bam", sample_id=list(samples.index))
+        expand("results/align_multi/{sample_id}/Aligned.out.bam", sample_id=list(samples.index)),
+        rules.sample_download.output
+    output:
+        touch("results/complete/{sample_id}.txt")
+    shell:
+        '''
+rm input[2]
+        '''               
 
 localrules: sample_complete
 rule sample_complete:
     input:
         "results/align_multi/{sample_id}/Aligned.out.cram",
         rules.telescope.output,
-        rules.stringtie.output,
-        rules.sample_download.output
+        rules.stringtie.output
     output:
-        touch("results/complete/{sample_id}.txt")
-    shell:
-        '''
-rm input[3]
-        '''       
+        touch("results/complete/{sample_id}.txt")     
 
 localrules: all
 rule all:

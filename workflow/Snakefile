@@ -22,7 +22,7 @@ rule sample_download:
 
 ## when job completed, remove the ubam to save space
 localrules: star_align
-rule star_complete:
+rule star_align:
     input:
         "results/align_multi/{sample_id}/ReadsPerGene.out.tab",
         "results/align_multi/{sample_id}/Aligned.out.bam",

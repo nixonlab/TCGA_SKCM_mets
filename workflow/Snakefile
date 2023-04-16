@@ -12,6 +12,7 @@ configfile: "config/config.yaml"
 include: "rules/common.smk"
 include: "rules/download_and_make_ubam.smk"
 include: "rules/align_star.smk"
+include: "rules/sort_cram.smk"
 include: "rules/telescope.smk"
 include: "rules/stringtie.smk"
 

@@ -43,11 +43,15 @@ rule star_complete:
 localrules: sample_complete
 rule sample_complete:
     input:
-        "results/align_multi/{sample_id}/Aligned.out.cram",
+        "results/align_multi/{sample_id}/Aligned.sortedByCoord.out.bam",
         rules.telescope.output,
         rules.stringtie.output
     output:
-        touch("results/complete/{sample_id}.txt")     
+        touch("results/complete/{sample_id}.txt")
+    shell:
+        '''
+rm {input[0]}
+        '''      
 
 localrules: all
 rule all:

@@ -19,7 +19,7 @@ rule telescope:
     shell:
         '''
 tdir=$(mktemp -d {config[tmpdir]}/{rule}.{wildcards.sample_id}.XXXXXX)
-samtools view -b {input.cram} {input.ref} -o {params.bam}
+samtools view -b -T {input.ref} -o {params.bam} {input.cram}
 
 telescope assign\
  --exp_tag inform\

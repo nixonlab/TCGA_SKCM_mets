@@ -18,7 +18,7 @@ rule samtools_sort_cram:
         '''
 tdir=$(mktemp -d {config[tmpdir]}/{rule}.{wildcards.sample_id}.XXXXXX)        
 samtools view -b -T {input.ref} -o {params.bam} {input.cram} 
-samtools sort -u -@ {threads} -T $tdir -o {output[0]} {params.bam} 
+samtools sort -@ {threads} -T $tdir -o {output[0]} {params.bam} 
 samtools view -C -T {input.ref} -o {output[1]} {output[0]}
 samtools index {output[0]}
 rm {params.bam}

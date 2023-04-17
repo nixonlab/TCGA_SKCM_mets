@@ -7,8 +7,7 @@ rule samtools_sort_cram:
         ref = config['genome_fasta']        
     output:
         "results/align_multi/{sample_id}/Aligned.sortedByCoord.out.bam",
-        "results/align_multi/{sample_id}/Aligned.sortedByCoord.out.cram",
-        "results/align_multi/{sample_id}/Aligned.sortedByCoord.out.cram.crai"
+        "results/align_multi/{sample_id}/Aligned.sortedByCoord.out.cram"
     params:
         bam = "results/align_multi/{sample_id}/Aligned.out.bam"
     conda:

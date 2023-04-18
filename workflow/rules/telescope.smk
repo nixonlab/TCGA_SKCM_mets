@@ -3,7 +3,7 @@
 
 rule telescope:
     input:
-        mbam = "results/align_multi/{sample_id}/Aligned.sortedByCoord.out.bam",
+        mbam = "results/align_multi/{sample_id}/Aligned.out.bam",
         annot = config['telescope']['annotation']
     output:
         "results/telescope/{sample_id}/report.tsv",

@@ -3,7 +3,7 @@
 
 rule stringtie:
     input:
-        cram = "results/align_multi/{sample_id}/Aligned.sortedByCoord.out.cram",
+        bam = "results/align_multi/{sample_id}/Aligned.sortedByCoord.out.bam",
         ref = config['genome_fasta'],
         annot = config['annotation_gtf']
     output:
@@ -22,7 +22,6 @@ stringtie\
  -f 0.05\
  -M 1\
  -G {input.annot}\
- --cram-ref {input.ref}\
  -o {output[0]}\
- {input.cram}
+ {input.bam}
         '''

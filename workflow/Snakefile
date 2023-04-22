@@ -25,6 +25,7 @@ rule sample_download:
 localrules: star_align
 rule star_align:
     input:
+        "results/align_multi/{sample_id}/Aligned.out.bam",
         "results/align_multi/{sample_id}/ReadsPerGene.out.tab",
         "results/align_multi/{sample_id}/Aligned.sortedByCoord.out.cram",
         "results/ubam/{sample_id}.bam",
@@ -32,7 +33,7 @@ rule star_align:
         touch("results/complete/{sample_id}_star_align.txt")
     shell:
         '''
-rm {input[2]}
+rm {input[3]}
         '''               
 
 localrules: star_complete

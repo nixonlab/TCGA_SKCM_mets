@@ -1,0 +1,206 @@
+---
+title: "1. Count Filtering, Normalization, Metadata"
+author: "Phoebe Fei"
+date: "2023-04-24"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+```{css style_settings, echo = FALSE}
+blockquote { 
+    font-size: 14px; 
+    font-style: italic;
+}
+h1{
+    font-size: 22px;
+}
+h2{
+    font-size: 20px;
+}
+h3{
+    font-size: 18px;
+}
+h4{
+    font-size: 16px;
+}
+
+```
+
+## Libraries
+
+```{r, eval = FALSE}
+devtools::install_github("nixonlab/scopetools")
+```
+
+```{r, message=FALSE}
+library(stringr)
+library(dplyr)
+library(magrittr)
+library(scopetools)
+library(DESeq2)
+library(stringr)
+library(ggplot2)
+library(viridis)
+library(UpSetR)
+library(edgeR)
+library(readxl)
+library(biomartr)
+library(rtracklayer)
+```
+
+
+# Loading Count Tables
+
+## Genes
+
+### Functions 
+
+#### Read and combine gene counts
+
+```{r}
+#directory: Given directory name, name_order: order of the columns, if not given, will order as the folders are listed in the directory (algn_multi/sample_name/...), lane: which column to take the count data from. Because we want to keep it consistent, we are assuming all datasets are unstranded and will take from 3rd column
+generate_gene_table <- function(directory, name_order = gsub(paste(directory,"\\/",sep = ""),"",list.dirs(directory))[-1], lane = 3){
+  for(i in 1:length(name_order)){
+    file_direct <- paste0(directory,name_order[i],"/ReadsPerGene.out.tab")
+    test <- read.table(file_direct, header = FALSE, row.names = 1)
+    if(exists("bindtable")){
+      #take out the summary rows
+      sample.lane <- data.frame(test[-c(1:4),lane], row.names = rownames(test)[-c(1:4)])
+      bindtable <- cbind(bindtable,sample.lane[rownames(bindtable),])
+    } else {
+      #take out the summary rows
+      bindtable <- data.frame(test[-c(1:4),lane], row.names = rownames(test)[-c(1:4)])
+    }
+  }
+  colnames(bindtable) <- name_order
+  return(bindtable)
+}
+
+```
+
+#### Extract Gene Data
+```{r}
+#mskcc: validation data
+gene_direct <- "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/raw data TCGA SKCM/align_multi/"
+raw_gene <- generate_gene_table(gene_direct)
+```
+
+## HERVs
+
+### Function to load telescope report and combine lanes
+
+Sample names
+
+```{r}
+sam_names_dir <- gsub(paste("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/raw data TCGA SKCM/telescope","\\/",sep = ""),"",list.dirs("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/raw data TCGA SKCM/telescope"))[-1]
+```
+
+
+```{r}
+#load_telescope_reports - files: give a list of paths that contain the telescope reports, colnames: column names 
+raw_herv <- load_telescope_reports(files = paste("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/raw data TCGA SKCM/telescope/",sam_names_dir, "/report.tsv", sep = ""), colnames = sam_names_dir)
+#take out no features 
+raw_herv <- raw_herv[which(rownames(raw_herv) != "__no_feature"),]
+```
+
+
+#### Take out the LINEs & Combine HERVs
+
+```{r}
+#Annotation data from Telescope GitHub (https://raw.githubusercontent.com/LIniguez/Telescope_MetaAnnotations/main/TE_annotation.v2.0.tsv)
+te_annot <- read.delim("/Users/phoebefei/Desktop/WCM/Bulk Mets UM Prj/Results/TE_annotation.v2.0.tsv", row.names = 1)
+herv.names <- subset(te_annot, Class == "HERV") %>% rownames(.)
+raw_herv <- raw_herv %>% filter(row.names(.) %in% herv.names) %>% na.omit(.)
+```
+
+# Metadata
+
+```{r}
+metadata <- read.csv("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/TCGA_SKCM_mets/resources/METADATA.csv")
+#dropping these names as they are related to the file extraction from upstream (Snakemake), not clinical data
+name_drop <- c("File.ID","File.Name","sample_id","filename","md5","size")
+metadata <- metadata[ ,!(colnames(metadata) %in% name_drop)]
+rownames(metadata) <- metadata$Sample.ID
+```
+
+## Gene annotation table
+
+Import the gtf file and reorganize it to a gene_annot table
+
+```{r}
+gtf <- rtracklayer::import("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/gencode.v38.annotation.gtf")
+gtf_df=as.data.frame(gtf)
+gtf_df <- gtf_df[,
+         c("gene_id", "seqnames", "start", "end", "strand", "width", "gene_name",
+           "gene_type")]
+
+colnames(gtf_df) <- c("gene_id", "chrom", "start", "end", "strand", "length",
+                      "gene_name", "gene_type")
+gene_annot <- 
+  gtf_df[!duplicated(gtf_df[,c(1,7)]), ] %>% 
+  dplyr::select('gene_id', 'gene_name', 'gene_type')
+rownames(gene_annot) <- gene_annot$gene_id
+gene_annot$display <- gene_annot$gene_name
+gene_annot[duplicated(gene_annot$gene_name), 'display'] <- 
+  paste(gene_annot[duplicated(gene_annot$gene_name), 'display'], 
+        gene_annot[duplicated(gene_annot$gene_name), 'gene_id'], sep='|')
+```
+
+
+# Filtering
+
+#### Goal: Have similar logged normalized total counts for all samples
+
+Modified from the [Reference Workflow](https://bioinformatics-core-shared-training.github.io/Bulk_RNAseq_Course_Nov22/Bulk_RNAseq_Course_Base/Markdowns/07_Data_Exploration.html)
+
+
+```{r}
+#take out low counts rows
+cutoff.count <- 5
+raw_gene <- raw_gene[rowSums(raw_gene) > cutoff.count,]
+raw_herv <- raw_herv[rowSums(raw_herv) > cutoff.count,]
+```
+
+## Genes
+
+```{r}
+#create the object
+DESeq.gene.filt <- DESeqDataSetFromMatrix(countData = raw_gene[,rownames(metadata)],
+                                   colData = metadata,
+                                   design = ~ 1) 
+#size factor
+DESeq.gene.filt <- estimateSizeFactors(DESeq.gene.filt)
+#normalize & log-sized
+DESeq.gene.filt_norm <- counts(DESeq.gene.filt, normalized = TRUE)
+```
+
+```{r, fig.width = 20, fig.height = 6}
+boxplot(log2(DESeq.gene.filt_norm+1), notch=FALSE, main = "Size-factor-normalized read counts", ylab="log2(read counts)", cex = .6, las = 2)
+
+```
+
+## HERVs
+
+```{r}
+#create the object
+DESeq.herv.filt <- DESeqDataSetFromMatrix(countData = raw_herv[,rownames(metadata)],
+                                   colData = metadata,
+                                   design = ~ 1) 
+#size factor
+DESeq.herv.filt <- estimateSizeFactors(DESeq.herv.filt)
+#normalize & log-sized
+DESeq.herv.filt_norm <- counts(DESeq.herv.filt, normalized = TRUE)
+```
+
+
+```{r, fig.width = 20, fig.height = 6}
+boxplot(log2(DESeq.herv.filt_norm+1), notch=FALSE, main = "Size-factor-normalized read counts", ylab="log2(read counts)", cex = .6, las = 2)
+```
+
+# Data Saving
+```{r, eval = FALSE}
+save(raw_gene, raw_herv, metadata, te_annot, gene_annot, file = "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/1.count_data.RData")
+```

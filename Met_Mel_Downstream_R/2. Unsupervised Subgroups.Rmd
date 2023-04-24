@@ -1,0 +1,80 @@
+---
+title: "2. Unsupervised Subgroups"
+author: "Phoebe Fei"
+date: "2023-04-24"
+output:   
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+```{css style_settings, echo = FALSE}
+blockquote { 
+    font-size: 14px; 
+    font-style: italic;
+}
+h1{
+    font-size: 22px;
+}
+h2{
+    font-size: 20px;
+}
+h3{
+    font-size: 18px;
+}
+h4{
+    font-size: 16px;
+}
+
+```
+
+## Libraries
+
+```{r, message=FALSE}
+library(stringr)
+library(DESeq2)
+library(vsn)
+library(ggplot2)
+library(apeglm)
+library(dplyr)
+library(magrittr)
+library(pheatmap)
+library(EnhancedVolcano)
+library(viridis)
+library(biomaRt)
+library(PCAtools)
+library(UpSetR)
+library(edgeR)
+library(scopetools)
+library(readxl)
+library(ConsensusClusterPlus)
+library(matrixStats)
+library(glmnet)
+library(Boruta)
+library(c060)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(scCustomize)
+```
+
+
+# Load data
+
+```{r}
+load("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/1.count_data.RData")
+```
+
+
+#### Site results
+```{r}
+print("Sample Type:")
+unique(metadata$Sample.Type)
+print("Specimen Site:")
+unique(metadata$CURATED_TCGA_SPECIMEN_SITE)
+print("Site of resection or biopsy:")
+unique(metadata$site_of_resection_or_biopsy)
+```
+
+

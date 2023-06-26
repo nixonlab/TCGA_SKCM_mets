@@ -12,6 +12,7 @@ resources/
 refs/
 *.log
 profiles/**
+**Cluster**
 
 # General
 .DS_Store

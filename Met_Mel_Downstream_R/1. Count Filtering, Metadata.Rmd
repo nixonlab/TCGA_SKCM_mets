@@ -51,12 +51,11 @@ library(biomartr)
 library(rtracklayer)
 ```
 
+# TCGA-SKCM
 
-# Loading Count Tables
+## Loading Count Tables
 
-## Genes
-
-### Functions 
+### Genes
 
 #### Read and combine gene counts
 
@@ -88,9 +87,9 @@ gene_direct <- "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/raw data TC
 raw_gene <- generate_gene_table(gene_direct)
 ```
 
-## HERVs
+### HERVs
 
-### Function to load telescope report and combine lanes
+#### Function to load telescope report and combine lanes
 
 Sample names
 
@@ -116,8 +115,9 @@ herv.names <- subset(te_annot, Class == "HERV") %>% rownames(.)
 raw_herv <- raw_herv %>% filter(row.names(.) %in% herv.names) %>% na.omit(.)
 ```
 
-# Metadata
+## Metadata
 
+### Main
 ```{r}
 metadata <- read.csv("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/TCGA_SKCM_mets/resources/METADATA.csv")
 #dropping these names as they are related to the file extraction from upstream (Snakemake), not clinical data
@@ -126,7 +126,9 @@ metadata <- metadata[ ,!(colnames(metadata) %in% name_drop)]
 rownames(metadata) <- metadata$Sample.ID
 ```
 
-## Gene annotation table
+
+
+### Gene annotation table
 
 Import the gtf file and reorganize it to a gene_annot table
 
@@ -149,8 +151,48 @@ gene_annot[duplicated(gene_annot$gene_name), 'display'] <-
         gene_annot[duplicated(gene_annot$gene_name), 'gene_id'], sep='|')
 ```
 
+HERV family grouping based on previously described workflow
 
-# Filtering
+```{r}
+retro.family.table <-  data.frame(
+  family=c('HML1', 'HML2', 'HML3', 'HML4', 'HML5', 'HML6',
+           'HERVK11', 'HERVK11D', 'HERVKC4', 'HERVK14C', 'HERVW', 'HERV9',
+           'HERV30', 'HERVE', 'HERVEA', 'HERVFC1', 'HERVFC2', 'HERVFH19',
+           'HERVFH21', 'HERVFRD', 'HERVH', 'HERVH48', 'HERVI', 'HERVIP10F',
+           'HERVIP10FH', 'HERVL', 'HERVL18', 'HERVL32', 'HERVL40', 'HERVL66',
+           'HERVL74', 'ERVL', 'ERVLB4', 'ERVLE', 'HERV3', 'HERV4',
+           'HERVP71A', 'HERVS71', 'PABLA', 'PABLB', 'MER4', 'MER4B',
+           'MER34B', 'MER41', 'MER61', 'MER101', 'PRIMA4', 'PRIMA41',
+           'PRIMAX', 'LTR19', 'LTR23', 'LTR25', 'LTR46', 'LTR57',
+           'ERV316A3', 'HARLEQUIN', 'HUERSP1', 'HUERSP2', 'HUERSP3', 'HUERSP3B',
+           'L1'),
+  group=c('HERVK', 'HERVK', 'HERVK', 'HERVK', 'HERVK', 'HERVK',
+          'HERVK', 'HERVK', 'HERVK', 'HERVK', 'HERVW', 'HERVW',
+          'HERVW', 'HERVE', 'HERVE', 'HERVF', 'HERVF', 'HERVF',
+          'HERVF', 'HERVF', 'HERVH', 'HERVH', 'HERVI', 'HERVI',
+          'HERVI', 'HERVL', 'HERVL', 'HERVL', 'HERVL', 'HERVL',
+          'HERVL', 'ERVL', 'ERVL', 'ERVL', 'ERV1', 'ERV1',
+          'HERVP', 'HERVS', 'PAB', 'PAB', 'MER4', 'MER4',
+          'MER4', 'MER4', 'MER4', 'MER4', 'PRIMA', 'PRIMA',
+          'PRIMA', 'MISC', 'MISC', 'MISC', 'MISC', 'MISC',
+          'ERV3', 'HARL', 'HUERS', 'HUERS', 'HUERS', 'HUERS', 
+          'L1'),
+  letter=c('K', 'K', 'K', 'K', 'K', 'K',
+           'K', 'K', 'K', 'K', 'W', 'W',
+           'W', 'E', 'E', 'F', 'F', 'F',
+           'F', 'F', 'H', 'H', 'I', 'I',
+           'I', 'L', 'L', 'L', 'L', 'L',
+           'L', 'L', 'L', 'L', '1', '1',
+           'P', 'S', '1', '1', '4', '4',
+           '4', '4', '4', '4', '4', '4',
+           '4', '1', '4', '4', 'H', 'L',
+           '3', '4', '4', '4', '4', '4',
+           'L1'),
+  stringsAsFactors=F)
+rownames(retro.family.table) <- retro.family.table$family
+```
+
+## Filtering
 
 #### Goal: Have similar logged normalized total counts for all samples
 
@@ -164,7 +206,7 @@ raw_gene <- raw_gene[rowSums(raw_gene) > cutoff.count,]
 raw_herv <- raw_herv[rowSums(raw_herv) > cutoff.count,]
 ```
 
-## Genes
+### Genes
 
 ```{r}
 #create the object
@@ -182,7 +224,7 @@ boxplot(log2(DESeq.gene.filt_norm+1), notch=FALSE, main = "Size-factor-normalize
 
 ```
 
-## HERVs
+### HERVs
 
 ```{r}
 #create the object
@@ -200,7 +242,328 @@ DESeq.herv.filt_norm <- counts(DESeq.herv.filt, normalized = TRUE)
 boxplot(log2(DESeq.herv.filt_norm+1), notch=FALSE, main = "Size-factor-normalized read counts", ylab="log2(read counts)", cex = .6, las = 2)
 ```
 
+### Exclude incomplete metadata
+
+#### Site results
+```{r}
+print("Sample Type:")
+unique(metadata$Sample.Type)
+print("Specimen Site:")
+unique(metadata$CURATED_TCGA_SPECIMEN_SITE)
+print("Site of resection or biopsy:")
+unique(metadata$site_of_resection_or_biopsy)
+```
+
+
+
+#### Adding broader classification of biopsy site and put additional metastasis to status
+
+```{r}
+metadata[,"Biopsy_Site"] <- recode(metadata$site_of_resection_or_biopsy,
+                                   `Lymph nodes of head, face and neck` = "Lymph nodes",                                        
+                                   `Lymph node, NOS` =   "Lymph nodes",                                                       
+                                   `Skin of trunk` = "Skin",                                                             
+                                   `Lymph nodes of axilla or arm` = "Lymph nodes",                                             
+                                   `Adrenal gland, NOS` = "Other Distant Metastasis",                                                       
+                                   `Connective, subcutaneous and other soft tissues of thorax` = "Connective tissue",                
+                                   `Skin, NOS` = "Skin",                                                                  
+                                   `Skin of upper limb and shoulder` = "Skin",                                           
+                                   `Connective, subcutaneous and other soft tissues of upper limb and shoulder` = "Connective tissue", 
+                                   `Lymph nodes of inguinal region or leg` =  "Lymph nodes",                                  
+                                   `Connective, subcutaneous and other soft tissues, NOS` =  "Connective tissue",                     
+                                   `Skin of scalp and neck` = "Skin",                                                
+                                   `Connective, subcutaneous and other soft tissues of head, face, and neck` =  "Connective tissue",  
+                                   `Connective, subcutaneous and other soft tissues of pelvis` = "Connective tissue",                
+                                   `Frontal lobe` =    "Other Distant Metastasis",                                                          
+                                   `Connective, subcutaneous and other soft tissues of trunk, NOS` =   "Connective tissue",          
+                                   `Vulva, NOS` = "Other Distant Metastasis",                                                             
+                                   `Vagina, NOS` =    "Other Distant Metastasis",                                                           
+                                   `Connective, subcutaneous and other soft tissues of lower limb and hip` =   "Connective tissue", 
+                                   `Pelvic lymph nodes`  =  "Lymph nodes",                                                       
+                                   `Connective, subcutaneous and other soft tissues of abdomen`   =   "Connective tissue",              
+                                   `Upper lobe, lung` = "Other Distant Metastasis",                                                       
+                                   `Jejunum` = "Other Distant Metastasis",                                                                  
+                                   `Skin of lower limb and hip` =  "Skin",                                                
+                                   `Nasal cavity` = "Other Distant Metastasis",                                                              
+                                   `Lung, NOS` = "Other Distant Metastasis",                                                                 
+                                   `Peritoneum, NOS` = "Other Distant Metastasis",                                                           
+                                   `Thorax, NOS` = "Other Distant Metastasis",                                                              
+                                   `Abdomen, NOS` = "Other Distant Metastasis",                                                              
+                                   `Overlapping lesion of rectum, anus and anal canal` = "Other Distant Metastasis" ,                       
+                                   `Skin of other and unspecified parts of face` = "Skin",                               
+                                   `Spleen` = "Lymph nodes" )
+
+metadata[,"Specimen_Site"] <- recode(metadata$CURATED_TCGA_SPECIMEN_SITE,
+                                     `Regional Lymph Node` = "Regional lymph node",
+                                     `Distant Metastasis` = "Distant",
+                                     `-` = "Unknown",
+                                     `Regional Skin or Soft Tissue` = "Regional skin or soft tissue",
+                                     `Primary Tumor` = "Primary",
+                                     `[Not Available]` = "Unknown")
+
+print(paste0("current sample number: ", nrow(metadata)))
+```
+
+
+#### UV Signature
+
+```{r}
+metadata$UV.signature[which(metadata$UV.signature == "-")] <- "Unknown"
+```
+
+#### Stage
+
+```{r}
+metadata$Stage <- recode(metadata$ajcc_pathologic_stage,
+                        `Stage IIIA` = "III",
+                        `Stage IIIC` = "III",
+                        `Stage III` = "III",
+                        `Stage II` = "II",
+                        `Stage IIIB` = "III",
+                        `Stage I` = "I",
+                        `Stage IV` = "IV",
+                        `Stage IIB` = "II",
+                        `Stage IA` = "I",
+                        `Stage 0` = "0",
+                        `Stage IB` = "I",
+                        `Stage IIA` = "II",
+                        `Not Reported` = "Unknown",
+                        `Stage IIC` = "II" )
+metadata$Stage[which(metadata$Stage == "" | is.na(metadata$Stage))] <-  "Unknown"
+metadata$Curated_Stage <- recode(metadata$CURATED_PATHOLOGIC_STAGE_AJCC7_AT_DIAGNOSIS_COMPLEX,
+                        `Stage IIIA` = "III",
+                        `III or IV NOS` = "III or IV",
+                        `Stage IIIC` = "III",
+                        `Stage IIA` = "II",
+                        `-` = "Unknown",
+                        `Stage III` = "III",
+                        `Stage IIIB` = "III",
+                        `Stage IA` = "I",
+                        `Stage IV` = "IV",
+                        `Stage IIB` = "II",
+                        `Stage II` = "II",
+                        `Stage IB` = "I",
+                        `I or II NOS` = "I or II",
+                        `Stage IIC` = "II",
+                        `[Not Available]` = "Unknown",
+                        `I - III NOS` = "Unknown",
+                        `Stage I` = "I",
+                        `[ERROR]` = "Unknown",
+                        `Stage 0` = "0" )
+```
+
+#### Status
+
+```{r}
+metadata[,"Status"] <- recode(metadata$Sample.Type,
+                              `Primary Tumor` = "Primary",
+                              `Metastatic` = "Metastatic",
+                              `Additional Metastatic` = "Metastatic")
+```
+
+
+#### Gender
+
+```{r}
+metadata$GENDER[which(metadata$GENDER == "-")] <- "Unknown"
+```
+
+#### Survival 
+
+```{r}
+metadata$CURATED_MELANOMA_SPECIFIC_VITAL_STATUS..0....ALIVE.OR.CENSORED...1....DEAD.OF.MELANOMA..[which(metadata$CURATED_MELANOMA_SPECIFIC_VITAL_STATUS..0....ALIVE.OR.CENSORED...1....DEAD.OF.MELANOMA.. %in% c("-","[Not Available]"))] <- "Unknown"
+metadata$CURATED_TCGA_DAYS_TO_DEATH_OR_LAST_FU[which(metadata$CURATED_TCGA_DAYS_TO_DEATH_OR_LAST_FU %in% c("-" , "[Not Available]" ,"[Discrepancy]"))] <- "Unknown"
+```
+
+
+#### Mutation
+
+```{r}
+metadata$MUTATIONSUBTYPES[which(metadata$MUTATIONSUBTYPES == "-")] <- "Unknown"
+```
+
+
+### Adding in the clinical follow-up and drug administration data
+
+```{r}
+#take out columns with only NA or null values
+not_all_na <- function(x) any(!(is.na(x) | x == "" | x == "[Not Available]"))
+drug_admin <- read.delim("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/TCGA_SKCM_drugadmin/nationwidechildrens.org_clinical_drug_skcm.tsv")
+drug_admin <- drug_admin[3:nrow(drug_admin),]  %>% select_if(not_all_na)
+colnames(drug_admin)[which(colnames(drug_admin) %in% c("bcr_patient_uuid","bcr_patient_barcode","form_completion_date"))] <- c("bcr_patient_uuid_admin"   ,"bcr_patient_barcode_admin" , "form_completion_date_admin")
+drug_response <- read.delim("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/TCGA_SKCM_followup/nationwidechildrens.org_clinical_follow_up_v2.0_skcm.tsv")
+drug_response <- drug_response[3:nrow(drug_response),]  %>% select_if(not_all_na)
+colnames(drug_response)[which(colnames(drug_response) %in% c("bcr_patient_uuid","bcr_patient_barcode","form_completion_date"))] <- c("bcr_patient_uuid_response"   ,"bcr_patient_barcode_response" , "form_completion_date_response")
+metadata <- metadata  %>% select_if(not_all_na)
+```
+
+#### This function will match the sample names and add in the drug administration and follow up information. 
+
+**If there are multiple matches for drug ministration**: If Immunotherapy is contained, use the immunotherapy column. Otherwise, use the lastest completion date (latest followup barcode). 
+
+```{r}
+response_meta <- data.frame(matrix(nrow = nrow(metadata), ncol = (ncol(drug_response) + ncol(drug_admin) + 3)), row.names = rownames(metadata))
+colnames(response_meta) <- c("Sample.ID","Case.ID",colnames(drug_response), colnames(drug_admin),"Immunotherapy")
+response_meta$Sample.ID <- rownames(response_meta)
+response_meta$Case.ID<- metadata[rownames(response_meta),"Case.ID"]
+rownames(response_meta) <- response_meta$Case.ID
+```
+
+```{r}
+for(case in rownames(response_meta)){
+  if(case %in% drug_admin$bcr_patient_barcode_admin){
+    admin_subset <- subset(drug_admin, bcr_patient_barcode_admin == case)
+    if(nrow(admin_subset) > 1){
+      therapy_types <- paste(unique(admin_subset[,"pharmaceutical_therapy_type"]), collapse = ",")
+      drug_names <- paste(unique(admin_subset[,"pharmaceutical_therapy_drug_name"]), collapse = ",")
+      drug_classification<-paste(unique(admin_subset[,"clinical_trial_drug_classification"]), collapse = ",")
+      if("Immunotherapy" %in% admin_subset$pharmaceutical_therapy_type){
+        admin_subset <- admin_subset %>% filter(., pharmaceutical_therapy_type == "Immunotherapy")
+        response_meta[case,"Immunotherapy"] <- "YES"
+      }else{
+        response_meta[case,"Immunotherapy"] <- "NO"
+      }
+      admin_subset <- admin_subset[order(admin_subset$bcr_drug_barcode),]
+      row_to_extract <- tail(admin_subset,n=1)
+      response_meta[case,colnames(admin_subset)] <- row_to_extract
+      response_meta[case, "pharmaceutical_therapy_type"] <- therapy_types
+      response_meta[case, "pharmaceutical_therapy_drug_name"] <- drug_names
+      response_meta[case, "clinical_trial_drug_classification" ] <- drug_classification
+    }else{
+      if("Immunotherapy" %in% admin_subset$pharmaceutical_therapy_type){
+        response_meta[case,"Immunotherapy"] <- "YES"
+      }else{
+        response_meta[case,"Immunotherapy"] <- "NO"
+      }
+      row_to_extract <- tail(admin_subset,n=1)
+      response_meta[case,colnames(admin_subset)] <- row_to_extract
+    }
+  }
+  if(case %in% drug_response$bcr_patient_barcode_response){
+    followup_subset <- subset(drug_response, bcr_patient_barcode_response == case)
+    followup_subset <- followup_subset[order(followup_subset$bcr_followup_barcode),]
+    extract_row <- tail(followup_subset,n=1)
+    response_meta[case,colnames(followup_subset)] <- extract_row
+  }
+}
+rownames(response_meta) <- response_meta$Sample.ID
+drop_cols <- c("bcr_patient_uuid_response", "bcr_patient_barcode_response" , "bcr_patient_uuid_admin","bcr_patient_barcode_admin","Case.ID","Sample.ID")
+response_meta <- response_meta[ ,!(colnames(response_meta) %in% drop_cols)]
+metadata[,colnames(response_meta)] <- response_meta
+```
+
+Filtering
+
+### 1. Selected samples with complete metadata for unsupervised clustering                                                        
+
+```{r}
+mets_selected <- subset(metadata, UV.signature != "Unknown" & Stage != "Unknown" & GENDER != "Unknown" & `CURATED_MELANOMA_SPECIFIC_VITAL_STATUS..0....ALIVE.OR.CENSORED...1....DEAD.OF.MELANOMA..` != "Unknown" & CURATED_TCGA_DAYS_TO_DEATH_OR_LAST_FU != "Unknown" & MUTATIONSUBTYPES != "Unknown")
+print(paste0("current sample number: ", nrow(mets_selected)))
+```
+
+### 2. Metadata for responder vs. non-responder
+
+```{r}
+response_samples <- subset(metadata, Immunotherapy == "YES" & treatment_best_response %in% c ("Stable Disease", "Partial Response","Clinical Progressive Disease","Complete Response"))
+```
+
+
+# Hugo et al. response to anti-PD1 in metastatic melanoma
+
+### Genes
+
+#### Extract Gene Data
+```{r}
+hugo_direct <- "/Users/phoebefei/Desktop/WCM/Mets Melanoma/Responder v non-responder mets melanoma/hugo/align_multi/"
+hugo_gene <- generate_gene_table(hugo_direct)
+```
+
+### HERVs
+
+Sample names
+
+```{r}
+hugo_names_dir <- gsub(paste("/Users/phoebefei/Desktop/WCM/Mets Melanoma/Responder v non-responder mets melanoma/hugo/telescope","\\/",sep = ""),"",list.dirs("/Users/phoebefei/Desktop/WCM/Mets Melanoma/Responder v non-responder mets melanoma/hugo/telescope"))[-1]
+```
+
+
+```{r}
+hugo_herv <- load_telescope_reports(files = paste("/Users/phoebefei/Desktop/WCM/Mets Melanoma/Responder v non-responder mets melanoma/hugo/telescope/",hugo_names_dir, "/report.tsv", sep = ""), colnames = hugo_names_dir)
+#take out no features 
+hugo_herv <- hugo_herv[which(rownames(hugo_herv) != "__no_feature"),]
+```
+
+
+#### Take out the LINEs & Combine HERVs
+
+```{r}
+hugo_herv <- hugo_herv %>% filter(row.names(.) %in% herv.names) %>% na.omit(.)
+```
+
+## Metadata
+
+### Main
+```{r}
+hugo_metadata <- read.csv("/Users/phoebefei/Desktop/WCM/Mets Melanoma/Responder v non-responder mets melanoma/Mets_CM_bulk/resources/hugo_METADATA.csv")
+#dropping these names as they are related to the file extraction from upstream (Snakemake), not clinical data
+name_drop <- c("WES" , "RNAseq" ,"SRA.Run.ID..tumor.WES" ,"SRA.Run.ID..normal.WES" ,"AccessionID..WES", "Accession.ID..RNAseq", "BioProject", "BioSample", "Center.Name" ,"DATASTORE.filetype","DATASTORE.provider" ,"DATASTORE.region" , "Experiment" ,"GEO_Accession..exp."   , "version" , "Sample.Name", "source_name","SRA.Study","Tissue" )
+hugo_metadata <- hugo_metadata[ ,!(colnames(hugo_metadata) %in% name_drop)]
+rownames(hugo_metadata) <- hugo_metadata$Run
+```
+
+
+## Function to summarize metadata used
+
+```{r}
+make_sum <- function(meta_table, var_name, additional_cat = "None", print_status = FALSE){
+  n <- nrow(meta_table)
+  mets <- subset(meta_table, Status == "Metastatic")
+  primary <- subset(meta_table, Status == "Primary")
+  if(print_status){
+  print(paste0("Total Samples: ", n))
+  print(paste0("Total Primary: ", nrow(primary), " (", round((nrow(primary)/n)*100,2), "%)" ))}
+  if(additional_cat == "None"){
+    print(var_name)
+    categories_p <- unique(primary[,var_name])
+    for(sub_cat in categories_p){
+      n_cat <- length(which(primary[,var_name] == sub_cat))
+      p_cat <- round((n_cat/nrow(primary)*100),2)
+      print(paste0("In Primary, proportion of ", sub_cat, " : ", n_cat, "(", p_cat, "%)"))
+    }
+  }else if(additional_cat == "Continuous"){
+    categories_p <- as.numeric(primary[,var_name])
+    cat_mean <- round(mean(categories_p), 2)
+    cat_sd <- round(sd(categories_p),2)
+    cat_min <- min(categories_p)
+    cat_max <- max(categories_p)
+    cat_median <- median(categories_p)
+    print(paste0("In Primary, statistics of ", var_name, " - Mean[SD]: ", cat_mean, "[", cat_sd, "]; - Median[Min,Max]: ", cat_median, "[", cat_min, ",", cat_max, "]"))
+  }
+  if(print_status){
+  print(paste0("Total Metastatic: ", nrow(mets), " (", round((nrow(mets)/n)*100,2), "%)" ))}
+  if(additional_cat == "None"){
+    categories_m <- unique(mets[,var_name])
+    for(sub_cat in categories_m){
+      n_cat <- length(which(mets[,var_name] == sub_cat))
+      p_cat <- round((n_cat/nrow(mets)*100),2)
+      print(paste0("In Metastatic, proportion of ", sub_cat, " : ", n_cat, "(", p_cat, "%)"))
+    }
+  }else if(additional_cat == "Continuous"){
+    categories_m <- as.numeric(mets[,var_name])
+    cat_mean <- round(mean(categories_m), 2)
+    cat_sd <- round(sd(categories_m),2)
+    cat_min <- min(categories_m)
+    cat_max <- max(categories_m)
+    cat_median <- median(categories_m)
+    print(paste0("In Metastatic, statistics of ", var_name, " - Mean(SD): ", cat_mean, "(", cat_sd, "); - Median[Min,Max]: ", cat_median, "[", cat_min, ",", cat_max, "]"))
+  }
+}
+
+```
+
+
 # Data Saving
 ```{r, eval = FALSE}
-save(raw_gene, raw_herv, metadata, te_annot, gene_annot, file = "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/1.count_data.RData")
+save(metadata, mets_selected, te_annot, gene_annot,response_samples, raw_gene, raw_herv, hugo_metadata, hugo_gene, hugo_herv, make_sum, retro.family.table,file = "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/1.count_data.RData")
 ```
+

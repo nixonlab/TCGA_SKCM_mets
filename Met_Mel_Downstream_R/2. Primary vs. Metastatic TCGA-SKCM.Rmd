@@ -1,0 +1,693 @@
+---
+title: "2. Primary vs. Metastatic TCGA-SKCM"
+author: "Phoebe Fei"
+date: "2023-06-09"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+---
+
+```{css style_settings, echo = FALSE}
+blockquote { 
+    font-size: 14px; 
+    font-style: italic;
+}
+h1{
+    font-size: 22px;
+}
+h2{
+    font-size: 20px;
+}
+h3{
+    font-size: 18px;
+}
+h4{
+    font-size: 16px;
+}
+
+```
+
+## Libraries
+
+```{r, message=FALSE}
+library(stringr)
+library(DESeq2)
+library(vsn)
+library(ggplot2)
+library(apeglm)
+library(dplyr)
+library(tidyverse)
+library(magrittr)
+library(pheatmap)
+library(EnhancedVolcano)
+library(viridis)
+library(biomaRt)
+library(PCAtools)
+library(UpSetR)
+library(edgeR)
+library(scopetools)
+library(readxl)
+library(ConsensusClusterPlus)
+library(matrixStats)
+library(glmnet)
+library(Boruta)
+library(c060)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(scCustomize)
+library(sets)
+library(survival)
+library(survminer)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(DOSE)
+library(pathview)
+library(ggnewscale)
+library(patchwork)
+library(reshape2)
+```
+
+
+## Functions
+
+### Result Table & HeatMap Table Generation
+
+Result Table
+
+```{r}
+restable <- function(min_fc = 2, max_p = 0.05, n_top_genes = 20, deseq, cont, exclude_gene = ""){
+  MIN_L2FC=log2(min_fc)
+  res_table <- results(deseq, independentFiltering = TRUE, contrast = cont) %>% as.data.frame(.) %>% dplyr::select(everything()) %>%
+    filter(log2FoldChange >= MIN_L2FC | log2FoldChange <= -MIN_L2FC ) %>%
+    filter(padj <= max_p) %>%
+    arrange(padj)
+  if(length(exclude_gene) > 1 ){
+    res_table <- res_table[-which(rownames(res_table) %in% exclude_gene),] %>% arrange(padj)
+  }
+  if(nrow(res_table) > n_top_genes){
+    print(res_table[1:n_top_genes, ])}
+  else{
+    print(res_table)
+  }
+  return(res_table)
+}
+```
+
+Heatmap Table
+
+```{r}
+#include a exclude genes so that some background genes might be excluded; select top = 40 based on p values
+heattable <- function(deseq, res_table, select_string = "^(ERV|HERV|LTR|MER|HML).+",min_fc = 2, max_p = 0.05, select_genes = 40, exclude_genes = ""){
+  #rlog scaled
+  deseq.vst <- varianceStabilizingTransformation(deseq, blind = TRUE)
+  #select padj
+  seg.herv <- subset(res_table, padj < max_p & (log2FoldChange > log2(min_fc) | log2FoldChange < -log2(min_fc)))
+  #Select the HREVs/Genes
+  herv_names  <- str_extract(rownames(seg.herv), select_string)
+  seg.herv.1 <- seg.herv[(rownames(seg.herv) %in%  herv_names),]
+  seg.herv.1 <- seg.herv.1[!(rownames(seg.herv.1) %in% exclude_genes),]
+  if(nrow(seg.herv.1) < select_genes){
+    print(paste0("Only ", nrow(seg.herv.1), "rows significant after exclusion. Keeping all."))
+    vst.herv <- deseq.vst[rownames(seg.herv.1),] %>% assay
+  }else{
+    seg.herv.1 <- arrange(seg.herv.1, padj)
+    vst.herv <- deseq.vst[rownames(seg.herv.1[1:select_genes,]),] %>% assay
+  }
+  return(vst.herv)
+}
+
+```
+
+
+Color scales
+```{r}
+# Save as variable to global environment
+col_blind_p <- ColorBlind_Pal()
+glas32 <- DiscretePalette_scCustomize(num_colors = 32, palette = "glasbey")
+polyc<- DiscretePalette_scCustomize(num_colors = 36, palette = "polychrome", shuffle_pal = TRUE)
+varibow <- DiscretePalette_scCustomize(num_colors = 50, palette = "varibow")
+cluster_col <- c()
+cluster_factors <- c("C1","C2","C3","C4","C5","Metastatic","Primary")
+for(i in 1:length(cluster_factors)){
+  cluster_col[unique(cluster_factors)[i]] <- col_blind_p[i]
+}
+feature_col <- c()
+feature_selections <- c("BORUTA and LRT", "BORUTA and LASSO",   "LASSO and LRT" , "All Consensus","LASSO Unique" ,  "BORUTA Unique" ,"LRT Unique")
+for(i in 1:length(unique(feature_selections))){
+  feature_col[unique(feature_selections)[i]] <- polyc[i]
+}
+```
+
+# Load Data
+
+```{r}
+load("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/1.count_data.RData")
+
+```
+
+# Goal: 
+
+The Hugo or Van Allen datasets do not contain any primary samples, compute the gene and HERV expression differences within the TCGA-SKCM dataset will help us determine if we will need to drop the primary samples. 
+
+## Summary table of the metadata
+
+```{r}
+make_sum(meta_table = metadata, var_name = "UV.signature", additional_cat = "None", print_status = TRUE)
+make_sum(meta_table = metadata, var_name = "Stage", additional_cat = "None")
+make_sum(meta_table = metadata, var_name = "GENDER", additional_cat = "None")
+make_sum(meta_table = metadata, var_name = "Specimen_Site", additional_cat = "None")
+make_sum(meta_table = metadata, var_name = "Biopsy_Site", additional_cat = "None")
+make_sum(meta_table = metadata, var_name = "CURATED_MELANOMA_SPECIFIC_VITAL_STATUS..0....ALIVE.OR.CENSORED...1....DEAD.OF.MELANOMA..")
+```
+
+
+## Genes
+
+### PCA to see if there are obvious metadata variables that contribute to PC1 or PC2
+
+```{r}
+#create the object
+DESeq.gene.un <- DESeqDataSetFromMatrix(countData = raw_gene[,rownames(metadata)],
+                                   colData = metadata,
+                                   design = ~1) 
+DESeq.gene.un.trans <- DESeq(DESeq.gene.un)
+DESeq.gene.un.vst <- assay(varianceStabilizingTransformation(DESeq.gene.un.trans))
+```
+
+```{r}
+#try removeVar = 0.1 - 0.5
+DESeq.gene.un.pca.1 <- pca(DESeq.gene.un.vst, metadata = colData(DESeq.gene.un), removeVar = 0.1)
+DESeq.gene.un.pca.2 <- pca(DESeq.gene.un.vst, metadata = colData(DESeq.gene.un), removeVar = 0.2)
+DESeq.gene.un.pca.3 <- pca(DESeq.gene.un.vst, metadata = colData(DESeq.gene.un), removeVar = 0.3)
+DESeq.gene.un.pca.4 <- pca(DESeq.gene.un.vst, metadata = colData(DESeq.gene.un), removeVar = 0.4)
+DESeq.gene.un.pca.5 <- pca(DESeq.gene.un.vst, metadata = colData(DESeq.gene.un), removeVar = 0.5)
+```
+
+#### Process count info 
+```{r, fig.width = 10, fig.height = 5}
+#size factor
+DESeq.gene.un <- estimateSizeFactors(DESeq.gene.un)
+#normalize & log-sized
+DESeq.gene.un_norm <- counts(DESeq.gene.un, normalized = TRUE)
+boxplot(log2(DESeq.gene.un_norm+1), notch=FALSE, main = "Size-factor-normalized read counts\nGene Counts", ylab="log2(read counts)", cex = .6, las = 2)
+assay(DESeq.gene.un,"log.norm.counts") <- log2(DESeq.gene.un_norm+1)
+```
+
+
+```{r}
+#SD plot
+msd.gene <- vsn::meanSdPlot(DESeq.gene.un@assays@data@listData$log.norm.counts, ranks=FALSE, plot = FALSE)
+msd.gene$gg + ggtitle("Sequencing depth normalized log2(read counts), genes") + ylab("standard deviation")
+```
+
+
+PCA Plot
+
+```{r, fig.height = 8, fig.width = 10}
+biplot(DESeq.gene.un.pca.1, lab = NULL, colby = "Status", legendPosition = 'right') + ggtitle("TCGA-SKCM PCA (top 90% var), Gene Expression\nColor by Status")
+biplot(DESeq.gene.un.pca.2, lab = NULL, colby = "Status", legendPosition = 'right') + ggtitle("PTCGA-SKCM PCA (top 80% var), Gene Expression\nColor by Status")
+biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "Status", legendPosition = 'right') + ggtitle("TCGA-SKCM PCA (top 70% var), Gene Expression\nColor by Status")
+biplot(DESeq.gene.un.pca.4, lab = NULL, colby = "Status", legendPosition = 'right') + ggtitle("TCGA-SKCM PCA (top 60% var), Gene Expression\nColor by Status")
+biplot(DESeq.gene.un.pca.5, lab = NULL, colby = "Status", legendPosition = 'right') + ggtitle("TCGA-SKCM PCA (top 50% var), Gene Expression\nColor by Status")
+```
+
+There is really no much change on the PC scale, keep with 30%
+
+```{r, fig.height = 8, fig.width = 10}
+biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "Specimen_Site", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Sample Site")
+biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "Biopsy_Site", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Biopsy Site")
+biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "GENDER", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Gender")
+biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "MUTATIONSUBTYPES", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Mutation Subtypes")
+biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "UV.signature", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by UV Signature")
+biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "Stage", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Tumor Stage")
+```
+
+**No obvious variable explanation except for potential UV signature and Status difference. Running the test**
+
+
+```{r}
+metadata$Status <- as.factor(metadata$Status)
+DESeq.gene.pm <- DESeqDataSetFromMatrix(countData = raw_gene[DESeq.gene.un.pca.3$xvars,rownames(metadata)],
+                                   colData = metadata,
+                                   design = ~ Status) 
+DESeq.gene.pm$Status <- relevel(DESeq.gene.pm$Status, ref = "Primary")
+```
+
+Perform the test
+```{r}
+DESeq.gene.pm <- DESeq(DESeq.gene.pm ,parallel = T,test = "Wald", betaPrior = F)
+resultsNames(DESeq.gene.pm)
+```
+
+QQ Plot
+
+```{r}
+res_gene_pm.all <- as.data.frame(results(DESeq.gene.pm))
+Norm_quantile<- sort(-log10(seq(1, 1/nrow(res_gene_pm.all), length.out = nrow(res_gene_pm.all))), decreasing = TRUE)
+res_gene_pm.all <-res_gene_pm.all[order(res_gene_pm.all$padj, decreasing  = FALSE),]
+res_gene_pm.all["Normal_Quantile"] <- Norm_quantile
+ggplot(res_gene_pm.all, aes(x = Normal_Quantile, y =-log10(padj))) + geom_point()+geom_abline(intercept = 0, slope = 1, color="red") + xlab("Negative Log Normal Quantile (Expected)")+ylab("Negative Log 10 P Values (Observed)")+ggtitle("QQ Plot for Primary v. Metastatic Gene Expression, TCGA-SKCM")
+```
+
+
+### Feature Selection
+
+#### LRT
+
+```{r}
+DESeq.gene.pm.lrt <- DESeqDataSetFromMatrix(countData = raw_gene[DESeq.gene.un.pca.3$xvars,rownames(metadata)],
+                                   colData = metadata,
+                                   design = ~ Status)
+DESeq.gene.pm.lrt <- DESeq(DESeq.gene.pm.lrt,parallel = T,test = "LRT", reduced = ~1)
+res_gene_lrt <- restable(min_fc = 2, max_p = 0.01, n_top_genes = 20, DESeq.gene.pm.lrt)
+```
+
+
+```{r}
+selected_genes_pm <- list()
+selected_genes_pm$lrt <- rownames(res_gene_lrt) 
+```
+
+
+
+#### Boruta
+
+```{r}
+genes.pm.vst <- assay(varianceStabilizingTransformation(DESeq.gene.pm))
+ntop.gene.pm <- nrow(genes.pm.vst)
+vars.gene.pm <- rowVars(genes.pm.vst)
+Vstmat.gene.pm <- genes.pm.vst[order(-vars.gene.pm)[1:ntop.gene.pm],]
+```
+
+
+```{r, message = FALSE}
+set.seed(12345678)
+bor.orig.pm.gene <- Boruta(x = t(Vstmat.gene.pm), y = metadata$Status, doTrace=2, ntree = 1000, maxRuns = 1000)
+print(bor.orig.pm.gene )
+bor.model.pm.gene <- TentativeRoughFix(bor.orig.pm.gene )
+print(bor.model.pm.gene)
+selected_genes_pm$boruta <- names(bor.model.pm.gene$finalDecision)[bor.model.pm.gene$finalDecision == 'Confirmed']
+```
+
+#### LASSO
+
+```{r}
+set.seed(123456)
+gene.pm_cv <- cv.glmnet(x = t(Vstmat.gene.pm), y = metadata$Status, family="binomial",intercept = F, alpha=1)
+gene.pm.cf <- coef(gene.pm_cv , gene.pm_cv$lambda.1se)
+gene.pm.features <- as.data.frame(gene.pm.cf)
+gene.pm.feat.lasso<- rownames(gene.pm.features)[gene.pm.features!=0]
+selected_genes_pm$lasso <- gene.pm.feat.lasso
+``` 
+
+
+
+#### Consensus
+
+```{r}
+upset(fromList(selected_genes_pm), 
+      sets=c('lrt', 'boruta','lasso'), 
+      order.by = "freq",
+      text.scale = c(1.5, 1.5, 1.3, 1.3, 1.3, 1.3))
+```
+
+
+Heatmap table
+
+```{r}
+#Add a column to res_gene_pm about the feature selection results
+res_gene_pm.all$Feature_Select <- rep(NA,nrow(res_gene_pm.all))
+#lrt
+res_gene_pm.all[selected_genes_pm$lrt,"Feature_Select"] <- "LRT Unique"
+#boruta
+res_gene_pm.all[selected_genes_pm$boruta,"Feature_Select"] <- "BORUTA Unique"
+#lasso
+res_gene_pm.all[selected_genes_pm$lasso,"Feature_Select"] <- "LASSO Unique"
+#boruta & lasso
+las_bor <- intersect(selected_genes_pm$boruta,selected_genes_pm$lasso)
+res_gene_pm.all[las_bor,"Feature_Select"] <- "BORUTA and LASSO"
+#boruta & lrt
+bor_lrt <- intersect(selected_genes_pm$boruta,selected_genes_pm$lrt)
+res_gene_pm.all[bor_lrt,"Feature_Select"] <- "BORUTA and LRT"
+#lasso & lrt
+las_lrt <- intersect(selected_genes_pm$lasso,selected_genes_pm$lrt)
+res_gene_pm.all[las_lrt,"Feature_Select"] <- "LASSO and LRT"
+#all three
+all_3_gene <- intersect(las_lrt,selected_genes_pm$boruta)
+res_gene_pm.all[all_3_gene,"Feature_Select"] <- "All Consensus"
+#none (to be removed)
+gene_heat_pm <- genes.pm.vst[rownames(res_gene_pm.all)[(!is.na(res_gene_pm.all$Feature_Select))],]
+res_gene_pm_selected <- res_gene_pm.all[rownames(res_gene_pm.all)[(!is.na(res_gene_pm.all$Feature_Select))],]
+gene_clust_pm <- hclust(dist(t(gene_heat_pm)))
+metadata_rows_status <- metadata[rev(order(metadata[,"Status"],gene_clust_pm$order)),] %>% rownames(.)
+gene_heat_pm  <- gene_heat_pm[,metadata_rows_status]
+```
+
+
+
+#### Functional pathway analyses and reordering the gene rows
+
+Adapted from (hbctraining)[https://hbctraining.github.io/DGE_workshop_salmon/lessons/functional_analysis_2019.html]
+```{r}
+gene.pm.go <- enrichGO(gene = as.character(gene_annot[rownames(res_gene_pm_selected), "gene_name"]),
+                            universe = as.character(gene_annot[rownames(res_gene_pm.all), "gene_name"]),
+                            keyType = "SYMBOL",
+                            OrgDb = org.Hs.eg.db, 
+                            ont = "BP", 
+                            pAdjustMethod = "BH", 
+                            qvalueCutoff = 0.05, 
+                            readable = TRUE )
+gene.pm.go.summary <- as.data.frame(gene.pm.go)
+```
+
+
+
+#### Visualization
+
+Gene functional analyses
+
+```{r, fig.height=8, fig.width = 8}
+dotplot(gene.pm.go, showCategory = 15) + ggtitle("Enrichment Analysis\nSignificant DE Genes Metastatic vs. Primary")+theme( plot.title=element_text(size=10,face="bold"),axis.title=element_text(size=15))
+
+```
+
+
+
+```{r, fig.height= 12, fig.width = 12}
+gene_pm_pair <- enrichplot::pairwise_termsim(gene.pm.go)
+emapplot(gene_pm_pair, showCategory = 15, cex_label_category = 1, cex_category = 2, min_edge = 0.3) + ggtitle("Enrichment Map\nSignificant DE Genes Metastatic vs. Primary")+theme(plot.title=element_text(size=12,face="bold"),axis.title=element_text(size=30,face="bold"), legend.text = element_text(size = 15), legend.title = element_text(size = 20))
+
+```
+
+
+
+
+#### Visualization
+
+Heatmap
+
+```{r,fig.height = 18, fig.width = 15}
+breaklist <- seq(-3, 3, by = 0.25)
+feature_col_genes <- feature_col[unique(res_gene_pm_selected$Feature_Select)]
+status_col <- cluster_col[c("Primary","Metastatic")]
+pheatmap(gene_heat_pm, scale="row",main = "Feature Selected DE Genes, by Status",fontsize = 20, size = 35, color = inferno(25), show_rownames = FALSE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = metadata[,c("Status"), drop = FALSE],annotation_row = res_gene_pm_selected[,"Feature_Select",drop = FALSE],gaps_col = 65, annotation_colors = list(Status = status_col, Feature_Select = feature_col_genes))
+```
+
+
+```{r,fig.height = 4, fig.width = 16}
+breaklist <- seq(-3, 3, by = 0.25)
+gene_pm_heat_sub <- gene_heat_pm[all_3_gene,]
+rownames(gene_pm_heat_sub) <- gene_annot[rownames(gene_pm_heat_sub), "gene_name"]
+pheatmap(gene_pm_heat_sub, scale="row",main = "Feature Selected DE Genes, by Status\nShowing Selected Genes by All Methods",fontsize = 20, size = 35, color = inferno(25), show_rownames = TRUE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = metadata[,c("Status"), drop = FALSE],gaps_col = 65, annotation_colors = list(Status = status_col))
+```
+
+Volcano Plot
+
+```{r, fig.height = 18, fig.width = 20}
+res_gene_pm.all$Selected_gene <- rep("",nrow(res_gene_pm.all))
+res_gene_pm.all[all_3_gene,"Selected_gene"] <- gene_annot[all_3_gene, "gene_name"]
+EnhancedVolcano(res_gene_pm.all,lab = res_gene_pm.all$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.01,FCcutoff = 2,title = "Gene Volcano, Metastatic vs. Primary\nShowing Only All Selected Consensus",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+```
+
+
+
+
+## HERVs
+
+
+### PCA to see if there are obvious metadata variables that contribute to PC1 or PC2
+
+```{r}
+#create the object
+DESeq.herv.un <- DESeqDataSetFromMatrix(countData = raw_herv[,rownames(metadata)],
+                                   colData = metadata,
+                                   design = ~1) 
+DESeq.herv.un.trans <- DESeq(DESeq.herv.un)
+DESeq.herv.un.vst <- assay(varianceStabilizingTransformation(DESeq.herv.un.trans))
+```
+
+#### Process count info 
+```{r, fig.width = 10, fig.height = 5}
+#size factor
+DESeq.herv.un <- estimateSizeFactors(DESeq.herv.un)
+#normalize & log-sized
+DESeq.herv.un_norm <- counts(DESeq.herv.un, normalized = TRUE)
+boxplot(log2(DESeq.herv.un_norm+1), notch=FALSE, main = "Size-factor-normalized read counts\nHERV Counts", ylab="log2(read counts)", cex = .6, las = 2)
+assay(DESeq.herv.un,"log.norm.counts") <- log2(DESeq.herv.un_norm+1)
+```
+
+
+```{r}
+#SD plot
+msd.herv <- vsn::meanSdPlot(DESeq.herv.un@assays@data@listData$log.norm.counts, ranks=FALSE, plot = FALSE)
+msd.herv$gg + ggtitle("Sequencing depth normalized log2(read counts), HERVs") + ylab("standard deviation")
+```
+
+```{r}
+#try removeVar = 0.1 - 0.5
+DESeq.herv.un.pca.1 <- pca(DESeq.herv.un.vst, metadata = colData(DESeq.herv.un), removeVar = 0.1)
+DESeq.herv.un.pca.2 <- pca(DESeq.herv.un.vst, metadata = colData(DESeq.herv.un), removeVar = 0.2)
+DESeq.herv.un.pca.3 <- pca(DESeq.herv.un.vst, metadata = colData(DESeq.herv.un), removeVar = 0.3)
+DESeq.herv.un.pca.4 <- pca(DESeq.herv.un.vst, metadata = colData(DESeq.herv.un), removeVar = 0.4)
+DESeq.herv.un.pca.5 <- pca(DESeq.herv.un.vst, metadata = colData(DESeq.herv.un), removeVar = 0.5)
+```
+
+
+PCA Plot
+
+```{r, fig.height = 8, fig.width = 10}
+biplot(DESeq.herv.un.pca.1, lab = NULL, colby = "Status", legendPosition = 'right') + ggtitle("TCGA-SKCM PCA (top 90% var), HERV Expression\nColor by Status")
+biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "Status", legendPosition = 'right') + ggtitle("PTCGA-SKCM PCA (top 80% var), HERV Expression\nColor by Status")
+biplot(DESeq.herv.un.pca.3, lab = NULL, colby = "Status", legendPosition = 'right') + ggtitle("TCGA-SKCM PCA (top 70% var), HERV Expression\nColor by Status")
+biplot(DESeq.herv.un.pca.4, lab = NULL, colby = "Status", legendPosition = 'right') + ggtitle("TCGA-SKCM PCA (top 60% var), HERV Expression\nColor by Status")
+biplot(DESeq.herv.un.pca.5, lab = NULL, colby = "Status", legendPosition = 'right') + ggtitle("TCGA-SKCM PCA (top 50% var), HERV Expression\nColor by Status")
+```
+
+Seems to have better separation when removing bottom 20% variance, otherwise no much change
+
+
+```{r, fig.height = 8, fig.width = 10}
+biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "Specimen_Site", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Sample Site")
+biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "Biopsy_Site", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Biopsy Site")
+biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "GENDER", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Gender")
+biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "MUTATIONSUBTYPES", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Mutation Subtypes")
+biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "UV.signature", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by UV Signature")
+biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "Stage", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Tumor Stage")
+```
+
+UV signature seems to have greater impact on HERV expression
+
+### Primary vs. Metastatic
+
+```{r}
+#create the object
+DESeq.herv.pm <- DESeqDataSetFromMatrix(countData = raw_herv[DESeq.herv.un.pca.2$xvars,rownames(metadata)],
+                                   colData = metadata,
+                                   design = ~ Status)
+DESeq.herv.pm$Status <- relevel(DESeq.herv.pm$Status, ref = "Primary")
+```
+
+
+#### Testing
+
+Perform the test
+```{r}
+DESeq.herv.pm <- DESeq(DESeq.herv.pm ,parallel = T,test = "Wald")
+resultsNames(DESeq.herv.pm)
+```
+
+QQ Plot
+
+```{r}
+res_herv_pm.all <- as.data.frame(results(DESeq.herv.pm))
+Norm_quantile<- sort(-log10(seq(1, 1/nrow(res_herv_pm.all), length.out = nrow(res_herv_pm.all))), decreasing = TRUE)
+res_herv_pm.all <-res_herv_pm.all[order(res_herv_pm.all$padj, decreasing  = FALSE),]
+res_herv_pm.all["Normal_Quantile"] <- Norm_quantile
+ggplot(res_herv_pm.all, aes(x = Normal_Quantile, y =-log10(padj))) + geom_point()+geom_abline(intercept = 0, slope = 1, color="red") + xlab("Negative Log Normal Quantile (Expected)")+ylab("Negative Log 10 P Values (Observed)")+ggtitle("QQ Plot for HERVs, Primary vs. Metastatic")
+```
+
+
+### Feature Selection
+
+#### LRT
+
+```{r}
+DESeq.herv.pm.lrt <- DESeqDataSetFromMatrix(countData = raw_herv[DESeq.herv.un.pca.2$xvars,rownames(metadata)],
+                                   colData = metadata,
+                                   design = ~ Status)
+DESeq.herv.pm.lrt <- DESeq(DESeq.herv.pm.lrt ,parallel = T,test = "LRT", reduced = ~1)
+res_herv_pm <- restable(min_fc = 2, max_p = 0.01, n_top_genes = 20, DESeq.herv.pm.lrt)
+```
+
+
+```{r}
+selected_herv_pm <- list()
+selected_herv_pm$lrt <- rownames(res_herv_pm) 
+```
+
+
+
+#### Boruta
+
+```{r}
+herv.pm.vst <- assay(varianceStabilizingTransformation(DESeq.herv.pm))
+ntop.herv.pm <- nrow(herv.pm.vst)
+vars.herv.pm <- rowVars(herv.pm.vst)
+Vstmat.herv.pm <- herv.pm.vst[order(-vars.herv.pm)[1:ntop.herv.pm],]
+```
+
+
+```{r, message = FALSE}
+set.seed(12345678)
+bor.orig.pm.herv <- Boruta(x = t(Vstmat.herv.pm), y = metadata$Status, doTrace=2, ntree = 1000, maxRuns = 1000)
+print(bor.orig.pm.herv)
+bor.model.pm.herv <- TentativeRoughFix(bor.orig.pm.herv)
+print(bor.model.pm.herv)
+selected_herv_pm$boruta <- names(bor.model.pm.herv$finalDecision)[bor.model.pm.herv$finalDecision == 'Confirmed']
+```
+
+#### LASSO
+
+```{r}
+set.seed(123456)
+herv.pm_cv <- cv.glmnet(x = t(Vstmat.herv.pm), y = metadata$Status, family="binomial",intercept = F, alpha=1)
+herv.pm.cf <- coef(herv.pm_cv , herv.pm_cv$lambda.1se)
+herv.pm.features <- as.data.frame(herv.pm.cf)
+herv.pm.feat.lasso<- rownames(herv.pm.features)[herv.pm.features!=0]
+selected_herv_pm$lasso <- herv.pm.feat.lasso
+``` 
+
+
+#### Consensus
+
+```{r}
+upset(fromList(selected_herv_pm), 
+      sets=c('lrt', 'boruta','lasso'), 
+      order.by = "freq",
+      text.scale = c(1.5, 1.5, 1.3, 1.3, 1.3, 1.3))
+```
+
+
+Heatmap table
+
+```{r}
+#Add a column to res_herv_pm.all about the feature selection results
+res_herv_pm.all$Feature_Select <- rep(NA,nrow(res_herv_pm.all))
+#lrt
+res_herv_pm.all[selected_herv_pm$lrt,"Feature_Select"] <- "LRT Unique"
+#boruta
+res_herv_pm.all[selected_herv_pm$boruta,"Feature_Select"] <- "BORUTA Unique"
+#lasso
+res_herv_pm.all[selected_herv_pm$lasso,"Feature_Select"] <- "LASSO Unique"
+#boruta & lasso
+las_bor <- intersect(selected_herv_pm$boruta,selected_herv_pm$lasso)
+res_herv_pm.all[las_bor,"Feature_Select"] <- "BORUTA and LASSO"
+#boruta & lrt
+bor_lrt <- intersect(selected_herv_pm$boruta,selected_herv_pm$lrt)
+res_herv_pm.all[bor_lrt,"Feature_Select"] <- "BORUTA and LRT"
+#lasso & lrt
+las_lrt <- intersect(selected_herv_pm$lasso,selected_herv_pm$lrt)
+res_herv_pm.all[las_lrt,"Feature_Select"] <- "LASSO and LRT"
+#all three
+all_3_herv <- intersect(las_lrt,selected_herv_pm$boruta)
+res_herv_pm.all[all_3_herv,"Feature_Select"] <- "All Consensus"
+#none (to be removed)
+herv_heat_pm <- herv.pm.vst[rownames(res_herv_pm.all)[(!is.na(res_herv_pm.all$Feature_Select))],]
+res_herv_pm_selected <- res_herv_pm.all[rownames(res_herv_pm.all)[(!is.na(res_herv_pm.all$Feature_Select))],]
+herv_clust_pm <- hclust(dist(t(herv_heat_pm)))
+metadata_rows_status <- metadata[rev(order(metadata[,"Status"],herv_clust_pm$order)),] %>% rownames(.)
+herv_heat_pm  <- herv_heat_pm[,metadata_rows_status]
+```
+
+
+
+
+#### Visualization
+
+Heatmap
+
+```{r,fig.height = 12, fig.width = 15}
+breaklist <- seq(-3, 3, by = 0.25)
+feature_col_herv <- feature_col[unique(res_herv_pm_selected$Feature_Select)]
+pheatmap(herv_heat_pm, scale="row",main = "Feature Selected DE HERVs, by Status",fontsize = 20, size = 35, color = inferno(25), show_rownames = FALSE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = metadata[,c("Status"), drop = FALSE],annotation_row = res_herv_pm_selected[,"Feature_Select",drop = FALSE], gaps_col = 65,annotation_colors = list(Status = status_col, Feature_Select = feature_col_herv))
+```
+
+```{r,fig.height = 4, fig.width = 16}
+breaklist <- seq(-3, 3, by = 0.25)
+herv_pm_heat_sub <- herv_heat_pm[all_3_herv,]
+pheatmap(herv_pm_heat_sub, scale="row",main = "Feature Selected DE HERVs, by Status",fontsize = 20, size = 35, color = inferno(25), show_rownames = TRUE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = metadata[,c("Status"), drop = FALSE],gaps_col = 65, annotation_colors = list(Status = status_col))
+```
+
+Volcano Plot
+
+```{r, fig.height = 18, fig.width = 20}
+res_herv_pm.all$Selected_gene <- rep("",nrow(res_herv_pm.all))
+res_herv_pm.all[all_3_herv,"Selected_gene"] <- all_3_herv
+EnhancedVolcano(res_herv_pm.all,lab = res_herv_pm.all$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.01,FCcutoff = 2,title = "HERV Vocalno, Primary vs. Metastatic\nShowing HERVs Selected by all 3 Methods",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+```
+
+### Annotate the HERV loci
+
+```{r}
+#download Luis' table
+feature_selected_hervs_pm <- te_annot[rownames(herv_heat_pm),]
+feature_selected_hervs_pm$Group <- retro.family.table[feature_selected_hervs_pm$Family, "group"]
+```
+
+#### Construct a summary table
+
+```{r}
+sum_te_table <- function(te_table,category, base = "Class"){
+  count_table <- data.frame(x = te_table[,base], y = te_table[,category]) %>% dplyr::count(y, x, sort = TRUE) 
+  colnames(count_table) <- c(category,base,"Count")
+  return(count_table)
+}
+graph.list <- list()
+for(items in c("Group","Category","Chrom","TE_type")){
+  pm.summary <- sum_te_table(feature_selected_hervs_pm,category = items)
+  graph.list[[items]] = pm.summary
+}
+```
+
+
+```{r, fig.height = 5, fig.width =10}
+group_col <- ggplot(graph.list$Group, aes(x = Class, y = Count, fill = reorder(Group, -Count))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = polyc)+ xlab(NULL) + guides(fill = guide_legend(title = "HERV Family Group"))
+cat_col <- ggplot(graph.list$Category, aes(x = Class, y = Count, fill = reorder(Category, -Count))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = col_blind_p)+ xlab(NULL) + guides(fill = guide_legend(title = "HERV Category"))
+chrom_col <- ggplot(graph.list$Chrom, aes(x = Class, y = Count, fill = reorder(Chrom, -Count))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = varibow)+ xlab(NULL) + guides(fill = guide_legend(title = "HERV Chromosome Position"))
+type_col <- ggplot(graph.list$TE_type, aes(x = Class, y = Count, fill = reorder(TE_type, -Count))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = glas32)+ xlab(NULL) + guides(fill = guide_legend(title = "HERV Type"))
+
+group_col + cat_col+chrom_col+type_col+plot_layout(ncol = 4)
+```
+
+### Count Plotting
+
+
+```{r, fig.height = 5, fig.width = 3}
+plot_contrast <- function(count_table, metadata,category, herv, title = "Selected Counts"){
+  count_hervs <- cbind(t(count_table[herv,rownames(metadata), drop = FALSE]), metadata[, category,drop = FALSE])
+  colnames(count_hervs) <- c("HERV","Category")
+  herv_plot <- ggplot(count_hervs,aes(x = Category, y = HERV, color = Category)) + geom_boxplot(outlier.shape = NA)+ geom_jitter(size = 1, shape=16, position=position_jitter(0.2))+ stat_summary(fun.y=mean, geom="point", shape=19, size=3, color = "red")+scale_color_manual(values = c("#E69F00", "#56B4E9"))+xlab(NULL)+ ylab(" Normalized Counts")+ggtitle(title)+theme(plot.title = element_text(size = 15, face = "bold"),axis.title=element_text(size=15,face="bold"),legend.title = element_text(size = 15,face="bold"),axis.text = element_text(size = 15),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1))
+  return(print(herv_plot))}
+
+HERVH_13q33.3_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "HERVH_13q33.3", title = "HERVH_13q33.3")
+MER4B_19q13.42a_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "MER4B_19q13.42a", title = "MER4B_19q13.42a")
+HERV4_13q32.3_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "HERV4_13q32.3", title = "HERV4_13q32.3")
+ERVLB4_8p21.3b_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "ERVLB4_8p21.3b", title = "ERVLB4_8p21.3b")
+HERVI_7q33c_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "HERVI_7q33c", title = "HERVI_7q33c")
+HERVL18_6q14.1_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "HERVL18_6q14.1", title = "HERVL18_6q14.1")
+MER61_12p13.31b_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "MER61_12p13.31b", title = "MER61_12p13.31b")
+```
+
+
+```{r, fig.height = 10, fig.width = 12}
+
+HERVH_13q33.3_pm+MER4B_19q13.42a_pm+HERV4_13q32.3_pm+ERVLB4_8p21.3b_pm+HERVI_7q33c_pm+HERVL18_6q14.1_pm+MER61_12p13.31b_pm+plot_layout(ncol = 4, nrow = 2)
+```
+
+# Data Saving
+```{r, eval = FALSE}
+save(metadata, mets_selected, retro.family.table, te_annot, gene_annot,response_samples, raw_gene, raw_herv, hugo_metadata, hugo_gene, hugo_herv, make_sum, DESeq.gene.un.pca.3, DESeq.herv.un.pca.2, res_herv_pm.all, res_gene_pm.all, gene_heat_pm, herv_heat_pm, selected_genes_pm, selected_herv_pm, file = "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/2.Primary vs. Metastatic TCGA-SKCM.RData")
+```

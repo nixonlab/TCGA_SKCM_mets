@@ -67,6 +67,11 @@ library(org.Hs.eg.db)
 library(DOSE)
 library(pathview)
 library(ggnewscale)
+library(sva)
+library(ConsensusClusterPlus)
+library(scopetools)
+library(patchwork)
+library(ggVennDiagram)
 ```
 
 ## Functions
@@ -120,25 +125,6 @@ heattable <- function(deseq, res_table, select_string = "^(ERV|HERV|LTR|MER|HML)
 ```
 
 
-Color scales
-```{r}
-# Save as variable to global environment
-col_blind_p <- ColorBlind_Pal()
-glas32 <- DiscretePalette_scCustomize(num_colors = 32, palette = "glasbey")
-polyc<- DiscretePalette_scCustomize(num_colors = 36, palette = "polychrome", shuffle_pal = TRUE)
-varibow <- DiscretePalette_scCustomize(num_colors = 50, palette = "varibow")
-cluster_col <- c()
-cluster_factors <- c("C1","C2","C3","CR","PR","Metastatic","Primary","PD")
-for(i in 1:length(cluster_factors)){
-  cluster_col[unique(cluster_factors)[i]] <- col_blind_p[i]
-}
-feature_col <- c()
-feature_selections_hervs <- c("BORUTA and LRT", "BORUTA and LASSO",   "LASSO and LRT" , "All Consensus","LASSO Unique" ,  "BORUTA Unique" ,"LRT Unique","Wald Unique")
-for(i in 1:length(unique(feature_selections_hervs))){
-  feature_col[unique(feature_selections_hervs)[i]] <- polyc[i]
-}
-```
-
 # Load Data
 
 ```{r}
@@ -147,61 +133,202 @@ load("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/1.count_data.RD
 
 
 
-### Metadata Summary
+### Metadata Merging and Summary
 
-#### TCGA-SKCM
+Edit the make_sum function
 
 ```{r}
-make_sum(meta_table = response_samples, var_name = "UV.signature", additional_cat = "None")
-make_sum(meta_table = response_samples, var_name = "Stage", additional_cat = "None")
-make_sum(meta_table = response_samples, var_name = "GENDER", additional_cat = "None")
-make_sum(meta_table = response_samples, var_name = "Specimen_Site", additional_cat = "None")
-make_sum(meta_table = response_samples, var_name = "Biopsy_Site", additional_cat = "None")
-make_sum(meta_table = response_samples, var_name = "treatment_best_response")
+make_sum <- function(meta_table, var_name, additional_cat = "None", print_status = FALSE, na.val = "Unknown"){
+  n <- nrow(meta_table)
+  mets <- subset(meta_table, Status == "Metastatic")
+  primary <- subset(meta_table, Status == "Primary")
+  if(print_status){
+  print(paste0("Total Samples: ", n))
+  print(paste0("Total Primary: ", nrow(primary), " (", round((nrow(primary)/n)*100,2), "%)" ))}
+  if(additional_cat == "None"){
+    print(var_name)
+    categories_p <- unique(primary[,var_name])
+    for(sub_cat in categories_p){
+      n_cat <- length(which(primary[,var_name] == sub_cat))
+      p_cat <- round((n_cat/nrow(primary)*100),2)
+      print(paste0("In Primary, proportion of ", sub_cat, " : ", n_cat, "(", p_cat, "%)"))
+    }
+  }else if(additional_cat == "Continuous"){
+    primary <- primary[which(primary[,var_name] != na.val),]
+    categories_p <- as.numeric(primary[,var_name])
+    cat_mean <- round(mean(categories_p), 2)
+    cat_sd <- round(sd(categories_p),2)
+    cat_min <- min(categories_p)
+    cat_max <- max(categories_p)
+    cat_median <- median(categories_p)
+    print(paste0("In Primary, statistics of ", var_name, " - Mean[SD]: ", cat_mean, "[", cat_sd, "]; - Median[Min,Max]: ", cat_median, "[", cat_min, ",", cat_max, "]"))
+  }
+  if(print_status){
+  print(paste0("Total Metastatic: ", nrow(mets), " (", round((nrow(mets)/n)*100,2), "%)" ))}
+  if(additional_cat == "None"){
+    categories_m <- unique(mets[,var_name])
+    for(sub_cat in categories_m){
+      n_cat <- length(which(mets[,var_name] == sub_cat))
+      p_cat <- round((n_cat/nrow(mets)*100),2)
+      print(paste0("In Metastatic, proportion of ", sub_cat, " : ", n_cat, "(", p_cat, "%)"))
+    }
+  }else if(additional_cat == "Continuous"){
+    mets <- mets[which(mets[,var_name] != na.val),]
+    categories_m <- as.numeric(mets[,var_name])
+    cat_mean <- round(mean(categories_m), 2)
+    cat_sd <- round(sd(categories_m),2)
+    cat_min <- min(categories_m)
+    cat_max <- max(categories_m)
+    cat_median <- median(categories_m)
+    print(paste0("In Metastatic, statistics of ", var_name, " - Mean(SD): ", cat_mean, "(", cat_sd, "); - Median[Min,Max]: ", cat_median, "[", cat_min, ",", cat_max, "]"))
+  }
+}
 ```
 
-#### Hugo et al.
+```{r}
+hugo_metadata <- rename_with(hugo_metadata, .fn = function(x){return(c("Outcome","M_Stage","Batch","Sample.ID"))}, .cols = c("RECIST","Disease.Status","Study_Site","Run"))
+response_samples<- rename_with(response_samples, .fn = function(x){return( c("Gender","Outcome","Age","M_Stage","Overall.Survival","Vital.Status","Anatomical.Location","BRAF","NRAS","NF1","Treatment","biopsy_time"))}, .cols =  c("GENDER","treatment_best_response","CURATED_AGE_AT_TCGA_SPECIMEN","CURATED_M_STAGE_AT_DIAGNOSIS_COMPLEX","CURATED_DAYS_TO_DEATH_OR_LAST_FU","CURATED_MELANOMA_SPECIFIC_VITAL_STATUS..0....ALIVE.OR.CENSORED...1....DEAD.OF.MELANOMA..","site_of_resection_or_biopsy","BRAF_mut","NRAS_mut","NF1_mut","pharmaceutical_therapy_drug_name","prior_treatment"))
+
+```
+
+
+#### Recode to same format
+
 
 ```{r}
+hugo_metadata[is.na(hugo_metadata)] <- "Unknown"
+response_samples[is.na(response_samples)] <- "Unknown"
+```
+
+```{r}
+hugo_metadata$BRAF <- recode(hugo_metadata$BRAF,
+                             `-` = "wt",
+                             `L331F` = "L331F",
+                             `V600E` = "V600E",
+                             `Unknown` = "Unknown",
+                             `V600R` = "V600R",
+                             `V600K` = "V600K",
+                             `K483T, D594N` = "K483T, D594N")
+hugo_metadata$NF1 <- recode(hugo_metadata$NF1,
+                            `Unknown` = "Unknown",
+                            `Frame_Shift_Ins H31fs, Splice_Site` = "Frame_Shift_Ins H31fs, Splice_Site",
+                            `S2597*` = "S2597*",
+                            `-` = "wt",
+                            `R2349C` = "R2349C",
+                            `Q1255*` = "Q1255*",
+                            `K615K Splice Site` = "K615K Splice Site",
+                            `R1653C` = "R1653C")
+hugo_metadata$NRAS <- recode(hugo_metadata$NRAS,
+                             `Q61L` = "Q61L",
+                             `-` = "wt",
+                             `G13D` = "G13D",
+                             `Q61K` = "Q61K",
+                             `Q61R` = "Q61R",
+                             `T50I` = "T50I")
+hugo_metadata$Vital.Status <- recode(hugo_metadata$Vital.Status,
+                                     `Dead` = "1",
+                                     `Alive` = "0")
+hugo_metadata$Anatomical.Location <- recode(hugo_metadata$Anatomical.Location,
+                                            `L post. Thigh, inf., SC` = "Connective, subcutaneous and other soft tissues of lower limb and hip",
+                                            `Lung` = "Lung, NOS",
+                                            `Adrenal` = "Adrenal gland, NOS",
+                                            `L Chestwall, SC` = "Connective, subcutaneous and other soft tissues of thorax",
+                                            `L forearm, SC` = "Connective, subcutaneous and other soft tissues of upper limb and shoulder",
+                                            `Crown/scalp, SC` = "Connective, subcutaneous and other soft tissues of head, face, and neck",
+                                            `R leg, SC` = "Connective, subcutaneous and other soft tissues of lower limb and hip",
+                                            `Neck, SC` =  "Connective, subcutaneous and other soft tissues of head, face, and neck",             
+                                            `L lower abdomen, SC` = "Connective, subcutaneous and other soft tissues of abdomen" ,    
+                                            `Lower back, SC` = "Connective, subcutaneous and other soft tissues of trunk, NOS",          
+                                            `R neck, SC` = "Connective, subcutaneous and other soft tissues of head, face, and neck",             
+                                            `R clavicle, LN` = "Lymph nodes of head, face and neck",
+                                            `Chest, SC`  =  "Connective, subcutaneous and other soft tissues of trunk, NOS",            
+                                            `L clavicle` = "Skin of trunk",
+                                            `Left Flank, SC` =  "Connective, subcutaneous and other soft tissues of trunk, NOS",         
+                                            `Left Leg, SC` = "Connective, subcutaneous and other soft tissues of lower limb and hip",
+                                            `L Outer Inguinal` = "Skin of lower limb and hip",
+                                            `R upper arm` = "Skin of upper limb and shoulder",
+                                            `Scalp, SC` = "Connective, subcutaneous and other soft tissues of head, face, and neck",
+                                            `Sigmoid colon` =  "Colon, NOS",
+                                            `Abdominal wall` =  "Connective, subcutaneous and other soft tissues of abdomen" ,         
+                                            `Flank` =   "Skin of lower limb and hip",
+                                            `Small bowel` = "Bowel",
+                                            `Cervical, LN` = "Lymph nodes of head, face and neck")
 hugo_metadata$Status <- rep("Metastatic", nrow(hugo_metadata))
-make_sum(meta_table = hugo_metadata, var_name = "Disease.Status", additional_cat = "None")
-make_sum(meta_table = hugo_metadata, var_name = "Gender", additional_cat = "None")
-make_sum(meta_table = hugo_metadata, var_name = "Anatomical.Location", additional_cat = "None")
-make_sum(meta_table = hugo_metadata, var_name = "Age", additional_cat = "Continuous")
-make_sum(meta_table = hugo_metadata, var_name = "RECIST")
 ```
-
-
-
-Because of the little number of samples, and to match the HUGO dataset, we will rename all stable disease to PR.
 
 ```{r}
-response_samples$Response <- recode(response_samples$treatment_best_response,
-                                                `NA` = "Unknown",
-                                                `Clinical Progressive Disease` = "PD",
-                                                `[Not Applicable]` = "Unknown",
-                                                `[Not Available]` = "Unknown",
-                                                `Complete Response` = "CR",
-                                                `[Unknown]` = "Unknown",
-                                                `Stable Disease` = "PR",
-                                                `Partial Response` = "PR")
-
+response_samples$BRAF <- recode(response_samples$BRAF,
+                                `wt` = "wt",
+                                `Unknown` = "Unknown",
+                                `V600E;` = "V600E",
+                                `600_601VK>E;` = "600_601VK>E",
+                                `G469E;H725Y;G469E;H725Y;` = "G469E;H725Y;G469E;H725Y")
+response_samples$NF1 <- recode(response_samples$NF1,
+                               `wt` = "wt",
+                               `Unknown` = "Unknown",
+                               `A1240V;Q347*;E1238*;A1240V;Q347*;E1238*;` = "A1240V;Q347*;E1238*;A1240V;Q347*;E1238*")
+response_samples$NRAS <- recode(response_samples$NRAS,
+                                `Q61R;` = "Q61R",
+                                `Unknown` = "Unknown",
+                                `wt` = "wt",
+                                `Q61K;` = "Q61K",
+                                `G12R;` = "G12R")
+response_samples$Age[which(response_samples$Age == "[Not Available]")] <- "Unknown"
+response_samples$Gender <- recode(response_samples$Gender,
+                                  `MALE` = "M",
+                                  `FEMALE` = "F")
+response_samples$Overall.Survival[which(response_samples$Overall.Survival == "[Not Available]")] <- "Unknown"
+response_samples$Outcome <- recode(response_samples$Outcome,
+                                   `Clinical Progressive Disease` = "PD",
+                                   `Complete Response` = "CR",
+                                   `Stable Disease` = "PR",               
+                                   `Partial Response` = "PR"  )
+response_samples$Batch <- rep("TCGA", nrow(response_samples))
 ```
 
 
-# TCGA-SKCM
+#### Merging and summary
+
+```{r}
+response_meta_cols <- intersect(colnames(response_samples),colnames(hugo_metadata))
+response_meta <- rbind(response_samples[,response_meta_cols],hugo_metadata[,response_meta_cols])
+```
+
+```{r}
+make_sum(meta_table = response_meta, var_name = "Batch", additional_cat = "None")
+make_sum(meta_table = response_meta, var_name = "BRAF", additional_cat = "None")
+make_sum(meta_table = response_meta, var_name = "NRAS", additional_cat = "None")
+make_sum(meta_table = response_meta, var_name = "NF1", additional_cat = "None")
+make_sum(meta_table = response_meta, var_name = "Gender", additional_cat = "None")
+make_sum(meta_table = response_meta, var_name = "Age", additional_cat = "Continuous")
+make_sum(meta_table = response_meta, var_name = "Overall.Survival", additional_cat = "Continuous")
+make_sum(meta_table = response_meta, var_name = "Outcome")
+make_sum(meta_table = response_meta, var_name = "M_Stage")
+make_sum(meta_table = response_meta, var_name = "Vital.Status")
+make_sum(meta_table = response_meta, var_name = "biopsy_time")
+make_sum(meta_table = response_meta, var_name = "Anatomical.Location")
+make_sum(meta_table = response_meta, var_name = "Status")
+make_sum(meta_table = response_meta, var_name = "Treatment")
+```
 
 
-## Genes
+# Genes
+
+## Batch Correction
+
+
+```{r}
+res_gene <- intersect(rownames(raw_gene),rownames(hugo_gene))
+response_gene <- cbind(raw_gene[res_gene,rownames(response_samples)], hugo_gene[res_gene,])
+```
 
 
 ### PCA Plotting
 
 ```{r}
-rownames(response_samples) <- response_samples$Sample.ID
 #create the object
-DESeq.gene.un.r <- DESeqDataSetFromMatrix(countData = raw_gene[,rownames(response_samples)],
-                                   colData = response_samples,
+DESeq.gene.un.r <- DESeqDataSetFromMatrix(countData = response_gene[,rownames(response_meta)],
+                                   colData = response_meta,
                                    design = ~1)
 
 #size factor
@@ -223,51 +350,84 @@ DESeq.gene.un.r.pca <- pca(DESeq.gene.un.r.vst, metadata = colData(DESeq.gene.un
 PCA
 
 ```{r, fig.height = 8, fig.width = 10}
-biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "Response", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Treatment Response")
-biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "Status", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Status")
-biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "Specimen_Site", legendPosition = 'right') + ggtitle("PCA, Genes  Expression\nColor by Sample Site")
-biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "Biopsy_Site", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Biopsy Site")
-biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "GENDER", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Gender")
-biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "MUTATIONSUBTYPES", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Mutation Subtypes")
-biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "UV.signature", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by UV Signature")
-biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "Stage", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Tumor Stage")
-DESeq.gene.un.r.pca$metadata$CURATED_AGE_AT_TCGA_SPECIMEN <- as.numeric(DESeq.gene.un.r.pca$metadata$CURATED_AGE_AT_TCGA_SPECIMEN)
-response_samples$CURATED_AGE_AT_TCGA_SPECIMEN <- as.numeric(response_samples$CURATED_AGE_AT_TCGA_SPECIMEN)
-biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "CURATED_AGE_AT_TCGA_SPECIMEN", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Age")
+batch_col <- c("TCGA" = "#bb0e3d", "UCLA" = "#2D68C4","VIC" = "#866D4B")
+biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "Batch", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Batches") + scale_color_manual(values = batch_col)
+biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "Outcome", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Treatment Outcome") + scale_color_manual(values = respond_col[unique(response_meta$Outcome)])
+biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "Gender", legendPosition = 'right') + ggtitle("PCA, Genes  Expression\nColor by Gender")
+biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "Vital.Status", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Vital Status")
+biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "BRAF", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by BRAF Mutation")
+biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "NF1", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by NF1 Mutation")
+biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "NRAS", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by NRAS Mutation")
+DESeq.gene.un.r.pca$metadata$Age <- as.numeric(DESeq.gene.un.r.pca$metadata$Age)
+response_meta$Age <- as.numeric(response_meta$Age)
+biplot(DESeq.gene.un.r.pca, lab = NULL, colby = "Age", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Age")
 
 ```
 
 
-Had to incorporate UV signature as a covar
+Incorporate the batch correction with 
+
+#### Combat-seq
 
 ```{r}
-#subset only the PCA calculated genes
-filtered_matrix_gene <- raw_gene[DESeq.gene.un.r.pca$xvars, rownames(response_samples)]
+genes.corrected.r.mat <- sva::ComBat_seq(counts = as.matrix(response_gene), batch = response_meta$Batch)
+```
+
+
+#### Rerun PCA to see the variation
+
+
+```{r}
+#Create DESeq Subjects
+DESeq.corrected.gene.r <- DESeqDataSetFromMatrix(countData = genes.corrected.r.mat[,rownames(response_meta)],
+                                   colData = response_meta,
+                                   design = ~1)
 ```
 
 
 ```{r}
-response_samples$Response <- as.factor(response_samples$Response)
-#create the object
-DESeq.gene.rn <- DESeqDataSetFromMatrix(countData = filtered_matrix_gene[,rownames(response_samples)],
-                                   colData = response_samples,
-                                   design = ~ UV.signature + Response)
-DESeq.gene.rn$Response <- relevel(DESeq.gene.rn$Response, ref = "CR")
+#size factor
+DESeq.corrected.gene.r <- estimateSizeFactors(DESeq.corrected.gene.r)
+#PCA
+DESeq.corrected.gene.r.trans <- DESeq(DESeq.corrected.gene.r)
+DESeq.corrected.gene.r.vst <- assay(vst(DESeq.corrected.gene.r.trans))
+DESeq.corrected.gene.r.pca <- pca(DESeq.corrected.gene.r.vst, metadata = colData(DESeq.corrected.gene.r), removeVar = 0.3)
 ```
 
+
+```{r, fig.width = 8, fig.height = 8}
+biplot(DESeq.corrected.gene.r.pca, lab = NULL, colby = "Batch", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by Batches") +  scale_color_manual(values = batch_col)
+biplot(DESeq.corrected.gene.r.pca, lab = NULL, colby = "Outcome", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by Treatment Outcome") + scale_color_manual(values = respond_col[unique(response_meta$Outcome)])
+biplot(DESeq.corrected.gene.r.pca, lab = NULL, colby = "Gender", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by Gender")
+biplot(DESeq.corrected.gene.r.pca, lab = NULL, colby = "Vital.Status", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by Vital Status")
+biplot(DESeq.corrected.gene.r.pca, lab = NULL, colby = "BRAF", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by BRAF Mutation")
+biplot(DESeq.corrected.gene.r.pca, lab = NULL, colby = "NF1", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by NF1 Mutation")
+biplot(DESeq.corrected.gene.r.pca, lab = NULL, colby = "NRAS", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by NRAS Mutation")
+```
+
+No other factors from metadata seem to be contributing to the PCA
 
 #### Testing
 
+Create the object
+
+```{r}
+#Create DESeq Subjects
+DESeq.gene.r.t <- DESeqDataSetFromMatrix(countData = genes.corrected.r.mat[,rownames(response_meta)],
+                                   colData = response_meta,
+                                   design = ~Outcome)
+```
+
 Perform the test
 ```{r}
-DESeq.gene.rn <- DESeq(DESeq.gene.rn ,parallel = T,test = "Wald", betaPrior = TRUE)
-resultsNames(DESeq.gene.rn)
+DESeq.gene.r.t <- DESeq(DESeq.gene.r.t ,parallel = T,test = "Wald", betaPrior = TRUE)
+resultsNames(DESeq.gene.r.t)
 ```
 
 QQ Plot
 
 ```{r}
-res_gene_rn.all <- as.data.frame(results(DESeq.gene.rn))
+res_gene_rn.all <- as.data.frame(results(DESeq.gene.r.t))
 Norm_quantile<- sort(-log10(seq(1, 1/nrow(res_gene_rn.all), length.out = nrow(res_gene_rn.all))), decreasing = TRUE)
 res_gene_rn.all <-res_gene_rn.all[order(res_gene_rn.all$padj, decreasing  = FALSE),]
 res_gene_rn.all["Normal_Quantile"] <- Norm_quantile
@@ -275,109 +435,19 @@ ggplot(res_gene_rn.all, aes(x = Normal_Quantile, y =-log10(padj))) + geom_point(
 ```
 
 
-### Feature Selection
-
-#### LRT
-
-```{r}
-DESeq.gene.rn.lrt <- DESeqDataSetFromMatrix(countData = filtered_matrix_gene[,rownames(response_samples)],
-                                   colData = response_samples,
-                                   design = ~ UV.signature + Response) 
-DESeq.gene.rn.lrt <- DESeq(DESeq.gene.rn.lrt ,parallel = T,test = "LRT", reduced = ~1)
-res_gene_rn <- restable(min_fc = 2, max_p = 0.01, n_top_genes = 20, DESeq.gene.rn.lrt)
-```
-
-
-```{r}
-selected_genes_rn <- list()
-selected_genes_rn$lrt <- rownames(res_gene_rn) 
-```
-
-
-
-#### Boruta
-
-```{r}
-genes.rn.vst <- assay(varianceStabilizingTransformation(DESeq.gene.rn))
-ntop.gene.rn <- nrow(genes.rn.vst)
-vars.gene.rn <- rowVars(genes.rn.vst)
-Vstmat.gene.rn <- genes.rn.vst[order(-vars.gene.rn)[1:ntop.gene.rn],]
-```
-
-
-```{r, message = FALSE}
-set.seed(12345678)
-bor.orig.rn.gene <- Boruta(x = t(Vstmat.gene.rn), y = response_samples$Response, doTrace=2, ntree = 1000, maxRuns = 1000)
-print(bor.orig.rn.gene)
-bor.model.rn.gene <- TentativeRoughFix(bor.orig.rn.gene)
-print(bor.model.rn.gene)
-selected_genes_rn$boruta <- names(bor.model.rn.gene$finalDecision)[bor.model.rn.gene$finalDecision == 'Confirmed']
-```
-
-#### LASSO
-
-```{r}
-set.seed(123456)
-gene.rn_cv <- cv.glmnet(x = t(Vstmat.gene.rn), y = response_samples$Response, family="multinomial",intercept = F, alpha=1)
-gene.rn.tcga <- coef(gene.rn_cv , gene.rn_cv$lambda.1se)
-
-gene_rn.features.cr.tcga <- as.data.frame(gene.rn.tcga$CR)
-gene_cr.feat.tcga<- rownames(gene_rn.features.cr.tcga)[gene_rn.features.cr.tcga!=0]
-
-gene_rn.features.pd.tcga <- as.data.frame(gene.rn.tcga$PD)
-gene_pd.feat.tcga<- rownames(gene_rn.features.pd.tcga)[gene_rn.features.pd.tcga!=0]
-
-gene_rn.features.pr.tcga <- as.data.frame(gene.rn.tcga$PR)
-gene_pr.feat.tcga<- rownames(gene_rn.features.pr.tcga)[gene_rn.features.pr.tcga!=0]
-
-selected_gene.rn.lasso.tcga <-append(gene_cr.feat.tcga,append(gene_pr.feat.tcga,gene_pd.feat.tcga))
-selected_gene.rn.lasso.tcga <-selected_gene.rn.lasso.tcga[!duplicated(selected_gene.rn.lasso.tcga)]
-
-selected_genes_rn$lasso <- selected_gene.rn.lasso.tcga
-``` 
-LASSO has returned 0 for any subgroup
-
-#### Consensus
-
-```{r}
-upset(fromList(selected_genes_rn), 
-      sets=c('lrt', 'boruta','lasso'), 
-      order.by = "freq",
-      text.scale = c(1.5, 1.5, 1.3, 1.3, 1.3, 1.3))
-```
-
 
 Heatmap table
 
 ```{r}
-#Add a column to res_gene_pm about the feature selection results
-res_gene_rn.all$Feature_Select <- rep(NA,nrow(res_gene_rn.all))
-#lrt
-res_gene_rn.all[selected_genes_rn$lrt,"Feature_Select"] <- "LRT Unique"
-#boruta
-res_gene_rn.all[selected_genes_rn$boruta,"Feature_Select"] <- "BORUTA Unique"
-#lasso
-res_gene_rn.all[selected_genes_rn$lasso,"Feature_Select"] <- "LASSO Unique"
-#boruta & lasso
-las_bor <- intersect(selected_genes_rn$boruta,selected_genes_rn$lasso)
-res_gene_rn.all[las_bor,"Feature_Select"] <- "BORUTA and LASSO"
-#boruta & lrt
-bor_lrt <- intersect(selected_genes_rn$boruta,selected_genes_rn$lrt)
-res_gene_rn.all[bor_lrt,"Feature_Select"] <- "BORUTA and LRT"
-#lasso & lrt
-las_lrt <- intersect(selected_genes_rn$lasso,selected_genes_rn$lrt)
-res_gene_rn.all[las_lrt,"Feature_Select"] <- "LASSO and LRT"
-#all three
-all_3_gene <- intersect(las_lrt,selected_genes_rn$boruta)
-res_gene_rn.all[all_3_gene,"Feature_Select"] <- "All Consensus"
-#none (to be removed)
-gene_heat_rn <- genes.rn.vst[rownames(res_gene_rn.all)[(!is.na(res_gene_rn.all$Feature_Select))],]
+gene_heat_rn_table <- restable(min_fc = 2, max_p = 0.01, n_top_genes = 20, DESeq.gene.r.t)
+gene.vst.combined.outcome <- assay(vst(DESeq.gene.r.t))
+gene_heat_rn <- gene.vst.combined.outcome[rownames(gene_heat_rn_table),]
+res_gene_rn.all$Significant <- rep(NA,nrow(res_gene_rn.all))
+res_gene_rn.all[rownames(gene_heat_rn),"Significant"] <- gene_annot[rownames(gene_heat_rn),"gene_name"]
 rownames(gene_heat_rn) <- gene_annot[rownames(gene_heat_rn),"gene_name"]
-res_gene_rn_selected <- res_gene_rn.all[rownames(res_gene_rn.all)[(!is.na(res_gene_rn.all$Feature_Select))],]
-rownames(res_gene_rn_selected) <- gene_annot[rownames(res_gene_rn_selected),"gene_name"]
 gene_heat_tcga_clust <- hclust(dist(t(gene_heat_rn)))
-response_samples$Response <- factor(response_samples$Response, levels = c("CR","PR","PD"))
-metadata_col_gene.tcga <- response_samples[order(response_samples[,"Response"],gene_heat_tcga_clust$order),] %>% rownames(.)
+response_meta$Outcome <- factor(response_meta$Outcome, levels = c("CR","PR","PD"))
+metadata_col_gene.tcga <- response_meta[order(response_meta[,"Outcome"],gene_heat_tcga_clust$order),] %>% rownames(.)
 gene_heat_rn <- gene_heat_rn[,metadata_col_gene.tcga]
 ```
 
@@ -387,22 +457,20 @@ gene_heat_rn <- gene_heat_rn[,metadata_col_gene.tcga]
 
 Heatmap
 
-```{r,fig.height = 18, fig.width = 20}
+```{r,fig.height = 3, fig.width = 9}
 breaklist <- seq(-3, 3, by = 0.25)
-feature_col_genes <- feature_col[unique(res_gene_rn_selected$Feature_Select)]
-status_col <- cluster_col[c("CR","PR","PD")]
-pheatmap(gene_heat_rn, scale="row",main = "DE Genes, by Treatment Response, TCGA",fontsize = 16, size = 35, color = inferno(25), show_rownames = TRUE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = response_samples[,"Response", drop = FALSE],annotation_row = res_gene_rn_selected[rownames(gene_heat_rn),"Feature_Select",drop = FALSE], gaps_col = c(4,13),annotation_colors = list(Feature_Select = feature_col_genes, Response = status_col))
+pheatmap(gene_heat_rn, scale="row",main = "DE Genes, by Treatment Response",fontsize = 10, size = 30, color = inferno(25), show_rownames = TRUE, show_colnames = TRUE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = response_meta[,"Outcome", drop = FALSE], gaps_col = c(8,27),annotation_colors = list( Outcome = respond_col[c("CR","PR","PD")]))
 ```
 
 Volcano Plot
 
 ```{r, fig.height = 18, fig.width = 20}
-selected_features <- rownames(res_gene_rn_selected)
+selected_features <- rownames(gene_heat_rn_table)
 res_gene_rn.all$Selected_gene <- rep("",nrow(res_gene_rn.all))
 res_gene_rn.all[selected_features,"Selected_gene"] <- selected_features
 consensus_gene_name <- intersect(rownames(gene_annot), selected_features)
 res_gene_rn.all[consensus_gene_name,"Selected_gene"] <- gene_annot[consensus_gene_name, "gene_name"]
-EnhancedVolcano(res_gene_rn.all,lab = res_gene_rn.all$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "Gene Vocalno, Treatment Response\nShowing Any Selected Gene",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+EnhancedVolcano(res_gene_rn.all,lab = res_gene_rn.all$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.01,FCcutoff = 2,title = "Gene Volcano, Treatment Response\nShowing Any Selected Gene",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
 ### For each specific subgroup
@@ -410,24 +478,20 @@ EnhancedVolcano(res_gene_rn.all,lab = res_gene_rn.all$Selected_gene , x = 'log2F
 **Complete Response**
 
 ```{r, fig.height = 18, fig.width = 20}
-cr.tcga.gene <- results(DESeq.gene.rn, independentFiltering = TRUE, contrast = list(c("ResponseCR"), c("ResponsePR","ResponsePD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
-cr.tcga.gene$Selected_gene <- rep("",nrow(cr.tcga.gene))
-#for the gene annotation, use genes selected by any methods
-cr_consensus_gene.tcga <- intersect(rownames(gene_annot), union(selected_genes_rn$boruta, union(selected_genes_rn$lrt, gene_cr.feat.tcga)))
-cr.tcga.gene[cr_consensus_gene.tcga,"Selected_gene"] <- gene_annot[cr_consensus_gene.tcga, "gene_name"]
-EnhancedVolcano(cr.tcga.gene,lab = cr.tcga.gene$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "Gene Vocalno, TCGA, Complete Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+cr.tcga.gene <- results(DESeq.gene.r.t, independentFiltering = TRUE, contrast = list(c("OutcomeCR"), c("OutcomePR","OutcomePD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
+cr.tcga.gene$gene_names <- rep("",nrow(cr.tcga.gene))
+cr.tcga.gene[,"gene_names"] <- gene_annot[rownames(cr.tcga.gene), "gene_name"]
+EnhancedVolcano(cr.tcga.gene,lab = cr.tcga.gene$gene_names , x = 'log2FoldChange', y = 'padj', pCutoff = 0.01,FCcutoff = 2,title = "Gene Volcano, TCGA, Complete Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
 
 **Partial Response**
 
 ```{r, fig.height = 18, fig.width = 20}
-pr.tcga.gene <- results(DESeq.gene.rn, independentFiltering = TRUE, contrast = list(c("ResponsePR"), c("ResponseCR","ResponsePD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
-pr.tcga.gene$Selected_gene <- rep("",nrow(pr.tcga.gene))
-#for the gene annotation, use genes selected by any methods
-pr_consensus_gene.tcga <- intersect(rownames(gene_annot), union(selected_genes_rn$boruta, union(selected_genes_rn$lrt, gene_pr.feat.tcga)))
-pr.tcga.gene[pr_consensus_gene.tcga,"Selected_gene"] <- gene_annot[pr_consensus_gene.tcga, "gene_name"]
-EnhancedVolcano(pr.tcga.gene,lab = pr.tcga.gene$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "Gene Vocalno, TCGA, Partial Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+pr.tcga.gene <- results(DESeq.gene.r.t, independentFiltering = TRUE, contrast = list(c("OutcomePR"), c("OutcomeCR","OutcomePD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
+pr.tcga.gene$gene_names <- rep("",nrow(pr.tcga.gene))
+pr.tcga.gene[,"gene_names"] <- gene_annot[rownames(pr.tcga.gene), "gene_name"]
+EnhancedVolcano(pr.tcga.gene,lab = pr.tcga.gene$gene_names , x = 'log2FoldChange', y = 'padj', pCutoff = 0.01,FCcutoff = 2,title = "Gene Volcano, TCGA, Partial Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+ylim(0,13)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
 
@@ -435,24 +499,31 @@ EnhancedVolcano(pr.tcga.gene,lab = pr.tcga.gene$Selected_gene , x = 'log2FoldCha
 **Progressive Disease**
 
 ```{r, fig.height = 18, fig.width = 20}
-pd.tcga.gene <- results(DESeq.gene.rn, independentFiltering = TRUE, contrast = list(c("ResponsePD"), c("ResponseCR","ResponsePR")), listValues=c(1, -1/2)) %>% as.data.frame(.)
-pd.tcga.gene$Selected_gene <- rep("",nrow(pd.tcga.gene))
-#for the gene annotation, use genes selected by any methods
-pd_consensus_gene.tcga <- intersect(rownames(gene_annot), union(selected_genes_rn$boruta, union(selected_genes_rn$lrt, gene_pd.feat.tcga)))
-pd.tcga.gene[pd_consensus_gene.tcga,"Selected_gene"] <- gene_annot[pd_consensus_gene.tcga, "gene_name"]
-EnhancedVolcano(pd.tcga.gene,lab = pd.tcga.gene$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "Gene Vocalno, TCGA, Progressive Disease vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+pd.tcga.gene <- results(DESeq.gene.r.t, independentFiltering = TRUE, contrast = list(c("OutcomePD"), c("OutcomeCR","OutcomePR")), listValues=c(1, -1/2)) %>% as.data.frame(.)
+pd.tcga.gene$gene_names <- rep("",nrow(pd.tcga.gene))
+pd.tcga.gene[,"gene_names"] <- gene_annot[rownames(pd.tcga.gene), "gene_name"]
+EnhancedVolcano(pd.tcga.gene,lab = pd.tcga.gene$gene_names , x = 'log2FoldChange', y = 'padj', pCutoff = 0.01,FCcutoff = 2,title = "Gene Volcano, TCGA, Progressive Disease vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+ylim(0,8)+xlim(-3,7)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
 
 
-## HERVs
+# HERVs
+
+## Batch Correction
+
+Combine the HERVs
+
+```{r}
+res_herv <- intersect(rownames(raw_herv),rownames(hugo_herv))
+response_herv <- cbind(raw_herv[res_herv,rownames(response_samples)], hugo_herv[res_herv,])
+```
 
 ### PCA Plotting
 
 ```{r}
 #create the object
-DESeq.herv.un.r <- DESeqDataSetFromMatrix(countData = raw_herv[,rownames(response_samples)],
-                                   colData = response_samples,
+DESeq.herv.un.r <- DESeqDataSetFromMatrix(countData = response_herv[,rownames(response_meta)],
+                                   colData = response_meta,
                                    design = ~1)
 
 #size factor
@@ -474,413 +545,127 @@ DESeq.herv.un.r.pca <- pca(DESeq.herv.un.r.vst, metadata = colData(DESeq.herv.un
 PCA
 
 ```{r, fig.height = 8, fig.width = 10}
-biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "Response", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Tumor Response")
-biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "Specimen_Site", legendPosition = 'right') + ggtitle("PCA, HERVs  Expression\nColor by Sample Site")
-biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "Biopsy_Site", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Biopsy Site")
-biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "GENDER", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Gender")
-biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "MUTATIONSUBTYPES", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Mutation Subtypes")
-biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "UV.signature", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by UV Signature")
-biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "Stage", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Tumor Stage")
-DESeq.herv.un.r.pca$metadata$CURATED_AGE_AT_TCGA_SPECIMEN <- as.numeric(DESeq.herv.un.r.pca$metadata$CURATED_AGE_AT_TCGA_SPECIMEN)
-response_samples$CURATED_AGE_AT_TCGA_SPECIMEN <- as.numeric(response_samples$CURATED_AGE_AT_TCGA_SPECIMEN)
-biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "CURATED_AGE_AT_TCGA_SPECIMEN", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Age")
+biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "Batch", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Batches") + scale_color_manual(values = batch_col)
+biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "Outcome", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Treatment Outcome") + scale_color_manual(values = respond_col[unique(response_meta$Outcome)])
+biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "Gender", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Gender")
+biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "Vital.Status", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Vital Status")
+biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "BRAF", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by BRAF Mutation")
+biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "NF1", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by NF1 Mutation")
+biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "NRAS", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by NRAS Mutation")
+biplot(DESeq.herv.un.r.pca, lab = NULL, colby = "Age", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Age")
 
 ```
 
-Had to incorporate UV signature as a covar
+
+Incorporate the batch correction with 
+
+#### Combat-seq
 
 ```{r}
-#subset only the PCA calculated genes
-filtered_matrix_herv <- raw_herv[DESeq.herv.un.r.pca$xvars,rownames(response_samples)]
+herv.corrected.r.mat <- sva::ComBat_seq(counts = as.matrix(response_herv), batch = response_meta$Batch)
+```
+
+
+#### Rerun PCA to see the variation
+
+
+```{r}
+#Create DESeq Subjects
+DESeq.corrected.herv.r <- DESeqDataSetFromMatrix(countData = herv.corrected.r.mat[,rownames(response_meta)],
+                                   colData = response_meta,
+                                   design = ~1)
 ```
 
 
 ```{r}
-#create the object
-DESeq.herv.rn <- DESeqDataSetFromMatrix(countData = filtered_matrix_herv[,rownames(response_samples)],
-                                   colData = response_samples,
-                                   design = ~ UV.signature + Response)
-DESeq.herv.rn$Response <- relevel(DESeq.herv.rn$Response, ref = "CR")
+#size factor
+DESeq.corrected.herv.r <- estimateSizeFactors(DESeq.corrected.herv.r)
+#PCA
+DESeq.corrected.herv.r.trans <- DESeq(DESeq.corrected.herv.r)
+DESeq.corrected.herv.r.vst <- assay(varianceStabilizingTransformation(DESeq.corrected.herv.r.trans))
+DESeq.corrected.herv.r.pca <- pca(DESeq.corrected.herv.r.vst, metadata = colData(DESeq.corrected.herv.r), removeVar = 0.2)
 ```
 
+
+```{r, fig.width = 8, fig.height = 8}
+biplot(DESeq.corrected.herv.r.pca, lab = NULL, colby = "Batch", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by Batches") +  scale_color_manual(values = batch_col)
+biplot(DESeq.corrected.herv.r.pca, lab = NULL, colby = "Outcome", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by Treatment Outcome") + scale_color_manual(values = respond_col[unique(response_meta$Outcome)])
+biplot(DESeq.corrected.herv.r.pca, lab = NULL, colby = "Gender", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by Gender")
+biplot(DESeq.corrected.herv.r.pca, lab = NULL, colby = "Vital.Status", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by Vital Status")
+biplot(DESeq.corrected.herv.r.pca, lab = NULL, colby = "BRAF", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by BRAF Mutation")
+biplot(DESeq.corrected.herv.r.pca, lab = NULL, colby = "NF1", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by NF1 Mutation")
+biplot(DESeq.corrected.herv.r.pca, lab = NULL, colby = "NRAS", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by NRAS Mutation")
+```
+
+No other factors from metadata seem to be contributing to the PCA, but batch effect still present. Incorporating into the study design
 
 #### Testing
 
+Create the object
+
+```{r}
+#Create DESeq Subjects
+DESeq.herv.r.t <- DESeqDataSetFromMatrix(countData = herv.corrected.r.mat[,rownames(response_meta)],
+                                   colData = response_meta,
+                                   design = ~ Batch + Outcome)
+```
+
 Perform the test
 ```{r}
-DESeq.herv.rn <- DESeq(DESeq.herv.rn ,parallel = T,test = "Wald", betaPrior = TRUE)
-resultsNames(DESeq.herv.rn)
+DESeq.herv.r.t <- DESeq(DESeq.herv.r.t ,parallel = T,test = "Wald", betaPrior = TRUE)
+resultsNames(DESeq.herv.r.t)
 ```
 
 QQ Plot
 
 ```{r}
-res_herv_rn.all <- as.data.frame(results(DESeq.herv.rn))
+res_herv_rn.all <- as.data.frame(results(DESeq.herv.r.t))
 Norm_quantile<- sort(-log10(seq(1, 1/nrow(res_herv_rn.all), length.out = nrow(res_herv_rn.all))), decreasing = TRUE)
 res_herv_rn.all <-res_herv_rn.all[order(res_herv_rn.all$padj, decreasing  = FALSE),]
 res_herv_rn.all["Normal_Quantile"] <- Norm_quantile
-ggplot(res_herv_rn.all, aes(x = Normal_Quantile, y =-log10(padj))) + geom_point()+geom_abline(intercept = 0, slope = 1, color="red") + xlab("Negative Log Normal Quantile (Expected)")+ylab("Negative Log 10 P Values (Observed)")+ggtitle("QQ Plot for HERVs, New Tumor Form")
-```
-
-
-### Feature Selection
-
-#### LRT
-
-```{r}
-DESeq.herv.rn.lrt <- DESeqDataSetFromMatrix(countData = filtered_matrix_herv[,rownames(response_samples)],
-                                   colData = response_samples,
-                                   design = ~ UV.signature + Response) 
-DESeq.herv.rn.lrt <- DESeq(DESeq.herv.rn.lrt ,parallel = T,test = "LRT", reduced = ~1)
-res_herv_rn <- restable(min_fc = 2, max_p = 0.01, n_top_genes = 20, DESeq.herv.rn.lrt)
-```
-
-
-```{r}
-selected_hervs_rn <- list()
-selected_hervs_rn$lrt <- rownames(res_herv_rn) 
+ggplot(res_herv_rn.all, aes(x = Normal_Quantile, y =-log10(padj))) + geom_point()+geom_abline(intercept = 0, slope = 1, color="red") + xlab("Negative Log Normal Quantile (Expected)")+ylab("Negative Log 10 P Values (Observed)")+ggtitle("QQ Plot for HERVs, Treatment Response")
 ```
 
 
 
-#### Boruta
-
-```{r}
-herv.rn.vst <- assay(varianceStabilizingTransformation(DESeq.herv.rn))
-ntop.herv.rn <- nrow(herv.rn.vst)
-vars.herv.rn <- rowVars(herv.rn.vst)
-Vstmat.herv.rn <- herv.rn.vst[order(-vars.herv.rn)[1:ntop.herv.rn],]
-```
-
-
-```{r, message = FALSE}
-set.seed(12345678)
-bor.orig.rn.herv <- Boruta(x = t(Vstmat.herv.rn), y = response_samples$Response, doTrace=2, ntree = 1000, maxRuns = 1000)
-print(bor.orig.rn.herv)
-bor.model.rn.herv <- TentativeRoughFix(bor.orig.rn.herv)
-print(bor.model.rn.herv)
-selected_hervs_rn$boruta <- names(bor.model.rn.herv$finalDecision)[bor.model.rn.herv$finalDecision == 'Confirmed']
-```
-
-#### LASSO
-
-```{r}
-herv.rn_cv <- cv.glmnet(x = t(Vstmat.herv.rn), y = response_samples$Response, family="multinomial",intercept = F, alpha=1)
-herv.rn.tcga <- coef(herv.rn_cv , herv.rn_cv$lambda.1se)
-
-herv_rn.features.cr.tcga <- as.data.frame(herv.rn.tcga$CR)
-herv_cr.feat.tcga<- rownames(herv_rn.features.cr.tcga)[herv_rn.features.cr.tcga!=0]
-
-herv_rn.features.pd.tcga <- as.data.frame(herv.rn.tcga$PD)
-herv_pd.feat.tcga<- rownames(herv_rn.features.pd.tcga)[herv_rn.features.pd.tcga!=0]
-
-herv_rn.features.pr.tcga <- as.data.frame(herv.rn.tcga$PR)
-herv_pr.feat.tcga<- rownames(herv_rn.features.pr.tcga)[herv_rn.features.pr.tcga!=0]
-
-selected_herv.rn.lasso.tcga <-append(herv_cr.feat.tcga,append(herv_pr.feat.tcga,herv_pd.feat.tcga))
-selected_herv.rn.lasso.tcga <-selected_herv.rn.lasso.tcga[!duplicated(selected_herv.rn.lasso.tcga)]
-
-selected_hervs_rn$lasso <- selected_herv.rn.lasso.tcga
-``` 
-
-
-#### Consensus
-
-```{r}
-upset(fromList(selected_hervs_rn), 
-      sets=c('lrt', 'boruta','lasso'), 
-      order.by = "freq",
-      text.scale = c(1.5, 1.5, 1.3, 1.3, 1.3, 1.3))
-```
-
-
-Heatmap table
-
-```{r}
-#Add a column to res_gene_pm about the feature selection results
-res_herv_rn.all$Feature_Select <- rep(NA,nrow(res_herv_rn.all))
-#lrt
-res_herv_rn.all[selected_hervs_rn$lrt,"Feature_Select"] <- "LRT Unique"
-#boruta
-res_herv_rn.all[selected_hervs_rn$boruta,"Feature_Select"] <- "BORUTA Unique"
-#lasso
-res_herv_rn.all[selected_hervs_rn$lasso,"Feature_Select"] <- "LASSO Unique"
-#boruta & lasso
-las_bor <- intersect(selected_hervs_rn$boruta,selected_hervs_rn$lasso)
-res_herv_rn.all[las_bor,"Feature_Select"] <- "BORUTA and LASSO"
-#boruta & lrt
-bor_lrt <- intersect(selected_hervs_rn$boruta,selected_hervs_rn$lrt)
-res_herv_rn.all[bor_lrt,"Feature_Select"] <- "BORUTA and LRT"
-#lasso & lrt
-las_lrt <- intersect(selected_hervs_rn$lasso,selected_hervs_rn$lrt)
-res_herv_rn.all[las_lrt,"Feature_Select"] <- "LASSO and LRT"
-#all three
-all_3_gene <- intersect(las_lrt,selected_hervs_rn$boruta)
-res_herv_rn.all[all_3_gene,"Feature_Select"] <- "All Consensus"
-#none (to be removed)
-herv_heat_rn <- herv.rn.vst[rownames(res_herv_rn.all)[(!is.na(res_herv_rn.all$Feature_Select))],]
-res_herv_rn_selected <- res_herv_rn.all[rownames(res_herv_rn.all)[(!is.na(res_herv_rn.all$Feature_Select))],]
-herv_heat_rn <- herv_heat_rn[,order(response_samples$Response)]
-```
-
-
-
-#### Visualization
-
-Heatmap
-
-```{r,fig.height = 6, fig.width = 20}
-breaklist <- seq(-3, 3, by = 0.25)
-feature_col_hervs <- feature_col[unique(res_herv_rn_selected$Feature_Select)]
-pheatmap(herv_heat_rn, scale="row",main = "DE HERVs, by New Tumor Growth Post-therapy",fontsize = 20, size = 35, color = inferno(25), show_rownames = TRUE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = response_samples[,"Response", drop = FALSE],annotation_row = res_herv_rn_selected[,"Feature_Select",drop = FALSE], gaps_col = c(4,13),annotation_colors = list(Feature_Select = feature_col_hervs, Response = status_col))
-```
-
-Volcano Plot
-
-```{r, fig.height = 18, fig.width = 20}
-selected_features <- rownames(res_herv_rn_selected)
-res_herv_rn.all$Selected_gene <- rep("",nrow(res_herv_rn.all))
-res_herv_rn.all[selected_features,"Selected_gene"] <- selected_features
-EnhancedVolcano(res_herv_rn.all,lab = res_herv_rn.all$Selected_gene, x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "HERV Vocalno, New Tumor Growth After Treatment\nShowing Any Selected Gene",labSize = 10,  captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "yellow", "red2"),pointSize = 3)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
-```
-
-
-#### Each specific subgroup
-
+### Volcano for each specific subgroup
 
 **Complete Response**
 
 ```{r, fig.height = 18, fig.width = 20}
-cr.tcga.herv <- results(DESeq.herv.rn, independentFiltering = TRUE, contrast = list(c("ResponseCR"), c("ResponsePR","ResponsePD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
-cr.tcga.herv$Selected_gene <- rep("",nrow(cr.tcga.herv))
-#for annotation, use hervs selected by any methods
-cr_consensus_herv.tcga <- union(selected_hervs_rn$boruta, union(selected_hervs_rn$lrt, herv_cr.feat.tcga))
-cr.tcga.herv[cr_consensus_herv.tcga,"Selected_gene"] <- cr_consensus_herv.tcga
-EnhancedVolcano(cr.tcga.herv,lab = cr.tcga.herv$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "HERV Vocalno, TCGA, Complete Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+cr.herv <- results(DESeq.herv.r.t, independentFiltering = TRUE, contrast = list(c("OutcomeCR"), c("OutcomePR","OutcomePD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
+cr.herv[,"names"] <- rownames(cr.herv)
+EnhancedVolcano(cr.herv,lab = cr.herv$names , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 1,title = "HERV Vocalno, TCGA, Complete Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
 
 **Partial Response**
 
 ```{r, fig.height = 18, fig.width = 20}
-pr.tcga.herv <- results(DESeq.herv.rn, independentFiltering = TRUE, contrast = list(c("ResponsePR"), c("ResponseCR","ResponsePD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
-pr.tcga.herv$Selected_gene <- rep("",nrow(pr.tcga.herv))
-#for annotation, use hervs selected by any methods
-pr_consensus_herv.tcga <- union(selected_hervs_rn$boruta, union(selected_hervs_rn$lrt, herv_pr.feat.tcga))
-pr.tcga.herv[pr_consensus_herv.tcga,"Selected_gene"] <- pr_consensus_herv.tcga
-EnhancedVolcano(pr.tcga.herv,lab = pr.tcga.herv$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "HERV Vocalno, TCGA, Partial Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+pr.herv <- results(DESeq.herv.r.t, independentFiltering = TRUE, contrast = list(c("OutcomePR"), c("OutcomeCR","OutcomePD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
+pr.herv[,"names"] <- rownames(pr.herv)
+EnhancedVolcano(pr.herv,lab = pr.herv$names , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 1,title = "HERV Vocalno, TCGA, Partial Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
-
 
 
 **Progressive Disease**
 
 ```{r, fig.height = 18, fig.width = 20}
-pd.tcga.herv <- results(DESeq.herv.rn, independentFiltering = TRUE, contrast = list(c("ResponsePD"), c("ResponseCR","ResponsePR")), listValues=c(1, -1/2)) %>% as.data.frame(.)
-pd.tcga.herv$Selected_gene <- rep("",nrow(pd.tcga.herv))
-#for annotation, use hervs selected by any methods
-pd_consensus_herv.tcga <- union(selected_hervs_rn$boruta, union(selected_hervs_rn$lrt, herv_pd.feat.tcga))
-pd.tcga.herv[pd_consensus_herv.tcga,"Selected_gene"] <- pd_consensus_herv.tcga
-EnhancedVolcano(pd.tcga.herv,lab = pd.tcga.herv$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "HERV Vocalno, TCGA, Progressive Disease vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Hugo et al. 
-
-
-## Genes
-
-
-### PCA Plotting
-
-```{r}
-#create the object
-DESeq.gene.un.hugo <- DESeqDataSetFromMatrix(countData = hugo_gene[,rownames(hugo_metadata)],
-                                   colData = hugo_metadata,
-                                   design = ~1)
-
-#size factor
-DESeq.gene.un.hugo <- estimateSizeFactors(DESeq.gene.un.hugo)
-#normalize & log-sized
-DESeq.gene.un.hugo_norm <- counts(DESeq.gene.un.hugo, normalized = TRUE)
-boxplot(log2(DESeq.gene.un.hugo_norm+1), notch=FALSE, main = "Size-factor-normalized read counts\nGene Counts Treatment Hugo et. al", ylab="log2(read counts)", cex = .6, las = 2)
-assay(DESeq.gene.un.hugo,"log.norm.counts") <- log2(DESeq.gene.un.hugo_norm+1)
-
-DESeq.gene.un.hugo.trans <- DESeq(DESeq.gene.un.hugo)
-DESeq.gene.un.hugo.vst <- assay(varianceStabilizingTransformation(DESeq.gene.un.hugo.trans))
-```
-
-```{r}
-DESeq.gene.un.hugo.pca <- pca(DESeq.gene.un.hugo.vst, metadata = colData(DESeq.gene.un.hugo), removeVar = 0.3)
-```
-
-
-PCA
-
-```{r, fig.height = 8, fig.width = 10}
-biplot(DESeq.gene.un.hugo.pca , lab = NULL, colby = "RECIST", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Response Factor, Hugo")
-biplot(DESeq.gene.un.hugo.pca , lab = NULL, colby = "Gender", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Gender, Hugo")
-biplot(DESeq.gene.un.hugo.pca , lab = NULL, colby = "Disease.Status", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Disease Stage, Hugo")
-biplot(DESeq.gene.un.hugo.pca , lab = NULL, colby = "Previous.MAPKi", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Previous MAPKi Treatment, Hugo")
-DESeq.gene.un.hugo.pca $metadata$Age <- as.numeric(DESeq.gene.un.hugo.pca $metadata$Age)
-biplot(DESeq.gene.un.hugo.pca , lab = NULL, colby = "Age", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Age")
-biplot(DESeq.gene.un.hugo.pca , lab = NULL, colby = "Study_Site", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Study Site")
-```
-
-
-Had to incorporate study site as a covar
-
-```{r}
-#subset only the PCA calculated genes
-filtered_matrix_gene.hugo <- hugo_gene[DESeq.gene.un.hugo.pca$xvars, rownames(hugo_metadata)]
-```
-
-
-```{r}
-hugo_metadata$RECIST <- factor(hugo_metadata$RECIST, levels = c("CR","PR","PD"))
-#create the object
-DESeq.gene.rn.hugo <- DESeqDataSetFromMatrix(countData = filtered_matrix_gene.hugo[,rownames(hugo_metadata)],
-                                   colData = hugo_metadata,
-                                   design = ~ Study_Site + RECIST)
-DESeq.gene.rn.hugo$RECIST <- relevel(DESeq.gene.rn.hugo$RECIST, ref = "CR")
-```
-
-
-#### Testing
-
-Perform the test
-```{r}
-DESeq.gene.rn.hugo <- DESeq(DESeq.gene.rn.hugo ,parallel = T,test = "Wald", betaPrior = TRUE)
-resultsNames(DESeq.gene.rn.hugo)
-```
-
-QQ Plot
-
-```{r}
-hugo.res_gene_rn.all <- as.data.frame(results(DESeq.gene.rn.hugo))
-Norm_quantile<- sort(-log10(seq(1, 1/nrow(hugo.res_gene_rn.all), length.out = nrow(hugo.res_gene_rn.all))), decreasing = TRUE)
-hugo.res_gene_rn.all <-hugo.res_gene_rn.all[order(hugo.res_gene_rn.all$padj, decreasing  = FALSE),]
-hugo.res_gene_rn.all["Normal_Quantile"] <- Norm_quantile
-ggplot(hugo.res_gene_rn.all, aes(x = Normal_Quantile, y =-log10(padj))) + geom_point()+geom_abline(intercept = 0, slope = 1, color="red") + xlab("Negative Log Normal Quantile (Expected)")+ylab("Negative Log 10 P Values (Observed)")+ggtitle("QQ Plot for Gene, Response Factor, Hugo")
-```
-
-
-### Feature Selection
-
-#### LRT
-
-```{r}
-DESeq.gene.rn.lrt.hugo <- DESeqDataSetFromMatrix(countData = filtered_matrix_gene.hugo[,rownames(hugo_metadata)],
-                                   colData = hugo_metadata,
-                                   design = ~ Study_Site + RECIST)
-DESeq.gene.rn.lrt.hugo <- DESeq(DESeq.gene.rn.lrt.hugo ,parallel = T,test = "LRT", reduced = ~1)
-hugo.res_gene_rn <- restable(min_fc = 2, max_p = 0.01, n_top_genes = 20, DESeq.gene.rn.lrt.hugo)
-```
-
-
-```{r}
-selected_genes_rn.hugo <- list()
-selected_genes_rn.hugo$lrt <- rownames(hugo.res_gene_rn) 
-```
-
-
-
-#### Boruta
-
-```{r}
-genes.rn.vst.hugo <- assay(varianceStabilizingTransformation(DESeq.gene.rn.hugo))
-ntop.gene.rn.hugo <- nrow(genes.rn.vst.hugo)
-vars.gene.rn.hugo <- rowVars(genes.rn.vst.hugo)
-Vstmat.gene.rn.hugo <- genes.rn.vst.hugo[order(-vars.gene.rn.hugo)[1:ntop.gene.rn.hugo],]
-```
-
-
-```{r, message = FALSE}
-set.seed(12345678)
-bor.orig.rn.gene.hugo <- Boruta(x = t(Vstmat.gene.rn.hugo), y = hugo_metadata$RECIST, doTrace=2, ntree = 1000, maxRuns = 1000)
-print(bor.orig.rn.gene.hugo)
-bor.model.rn.gene.hugo <- TentativeRoughFix(bor.orig.rn.gene.hugo)
-print(bor.model.rn.gene.hugo)
-selected_genes_rn.hugo$boruta <- names(bor.model.rn.gene.hugo$finalDecision)[bor.model.rn.gene.hugo$finalDecision == 'Confirmed']
-```
-
-#### LASSO
-
-```{r}
-set.seed(123456)
-gene.rn_cv.hugo <- cv.glmnet(x = t(Vstmat.gene.rn.hugo), y = hugo_metadata$RECIST, family="multinomial",intercept = F, alpha=1)
-gene.rn.hugo <- coef(gene.rn_cv.hugo , gene.rn_cv.hugo$lambda.1se)
-
-gene_rn.features.cr.hugo <- as.data.frame(gene.rn.hugo$CR)
-gene_cr.feat.hugo<- rownames(gene_rn.features.cr.hugo)[gene_rn.features.cr.hugo!=0]
-
-gene_rn.features.pd.hugo <- as.data.frame(gene.rn.hugo$PD)
-gene_pd.feat.hugo<- rownames(gene_rn.features.pd.hugo)[gene_rn.features.pd.hugo!=0]
-
-gene_rn.features.pr.hugo <- as.data.frame(gene.rn.hugo$PR)
-gene_pr.feat.hugo<- rownames(gene_rn.features.pr.hugo)[gene_rn.features.pr.hugo!=0]
-
-selected_gene.rn.lasso.hugo <-append(gene_cr.feat.hugo,append(gene_pr.feat.hugo,gene_pd.feat.hugo))
-selected_gene.rn.lasso.hugo <-selected_gene.rn.lasso.hugo[!duplicated(selected_gene.rn.lasso.hugo)]
-
-selected_genes_rn.hugo$lasso <- selected_gene.rn.lasso.hugo
-``` 
-LASSO has returned 0 for any subgroup
-
-#### Consensus
-
-```{r}
-upset(fromList(selected_genes_rn.hugo), 
-      sets=c('lrt', 'boruta','lasso'), 
-      order.by = "freq",
-      text.scale = c(1.5, 1.5, 1.3, 1.3, 1.3, 1.3))
+pd.herv <- results(DESeq.herv.r.t, independentFiltering = TRUE, contrast = list(c("OutcomePD"), c("OutcomeCR","OutcomePR")), listValues=c(1, -1/2)) %>% as.data.frame(.)
+pd.herv[,"names"] <- rownames(pd.herv)
+EnhancedVolcano(pd.herv,lab =pd.herv$names , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 1,title = "HERV Vocalno, TCGA, Progressive Disease vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
 
 Heatmap table
 
 ```{r}
-#Add a column to res_gene_pm about the feature selection results
-hugo.res_gene_rn.all$Feature_Select <- rep(NA,nrow(hugo.res_gene_rn.all))
-#lrt
-hugo.res_gene_rn.all[selected_genes_rn.hugo$lrt,"Feature_Select"] <- "LRT Unique"
-#boruta
-hugo.res_gene_rn.all[selected_genes_rn.hugo$boruta,"Feature_Select"] <- "BORUTA Unique"
-#lasso
-hugo.res_gene_rn.all[selected_genes_rn.hugo$lasso,"Feature_Select"] <- "LASSO Unique"
-#boruta & lasso
-las_bor <- intersect(selected_genes_rn.hugo$boruta,selected_genes_rn.hugo$lasso)
-hugo.res_gene_rn.all[las_bor,"Feature_Select"] <- "BORUTA and LASSO"
-#boruta & lrt
-bor_lrt <- intersect(selected_genes_rn.hugo$boruta,selected_genes_rn.hugo$lrt)
-hugo.res_gene_rn.all[bor_lrt,"Feature_Select"] <- "BORUTA and LRT"
-#lasso & lrt
-las_lrt <- intersect(selected_genes_rn.hugo$lasso,selected_genes_rn.hugo$lrt)
-hugo.res_gene_rn.all[las_lrt,"Feature_Select"] <- "LASSO and LRT"
-#all three
-all_3_gene <- intersect(las_lrt,selected_genes_rn.hugo$boruta)
-hugo.res_gene_rn.all[all_3_gene,"Feature_Select"] <- "All Consensus"
-#none (to be removed)
-gene_heat_rn.hugo <- genes.rn.vst.hugo[rownames(hugo.res_gene_rn.all)[(!is.na(hugo.res_gene_rn.all$Feature_Select))],]
-rownames(gene_heat_rn.hugo) <- gene_annot[rownames(gene_heat_rn.hugo),"gene_name"]
-res_gene_rn_selected.hugo <- hugo.res_gene_rn.all[rownames(hugo.res_gene_rn.all)[(!is.na(hugo.res_gene_rn.all$Feature_Select))],]
-gene_heat_hugo_clust <- hclust(dist(t(gene_heat_rn.hugo)))
-metadata_col_gene.hugo <- hugo_metadata[order(hugo_metadata[,"RECIST"],gene_heat_hugo_clust$order),] %>% rownames(.)
-gene_heat_rn.hugo <- gene_heat_rn.hugo[,metadata_col_gene.hugo]
+herv_r_selected <- union(pd.herv %>% filter(., padj <= 0.05) %>% rownames(.), union(pr.herv %>% filter(., padj <= 0.05) %>% rownames(.), cr.herv %>% filter(., padj <= 0.05) %>% rownames(.)))
+herv.r.combined.outcome.vst <- assay(varianceStabilizingTransformation(DESeq.herv.r.t))
+herv_heat_rn <- herv.r.combined.outcome.vst[herv_r_selected,]
+herv_heat_tcga_clust <- hclust(dist(t(herv_heat_rn)))
+metadata_col_herv<- response_meta[order(response_meta[,"Outcome"],herv_heat_tcga_clust$order),] %>% rownames(.)
+herv_heat_rn <- herv_heat_rn[,metadata_col_herv]
 ```
 
 
@@ -889,21 +674,198 @@ gene_heat_rn.hugo <- gene_heat_rn.hugo[,metadata_col_gene.hugo]
 
 Heatmap
 
-```{r,fig.height = 18, fig.width = 20}
+```{r,fig.height = 2.5, fig.width = 8}
 breaklist <- seq(-3, 3, by = 0.25)
-feature_col_genes <- feature_col[unique(res_gene_rn_selected.hugo$Feature_Select)]
-pheatmap(gene_heat_rn.hugo, scale="row",main = "DE Genes, by Treatment Response, Hugo et al.",fontsize = 20, size = 35, color = inferno(25), show_rownames = FALSE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = hugo_metadata[,"RECIST", drop = FALSE],annotation_row = res_gene_rn_selected.hugo[,"Feature_Select",drop = FALSE], gaps_col = c(4,14),annotation_colors = list(Feature_Select = feature_col_genes, RECIST = status_col))
+pheatmap(herv_heat_rn, scale="row",main = "DE HERVs, by Treatment Response",fontsize = 8, size = 15, color = inferno(25), show_rownames = TRUE, show_colnames = TRUE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = response_meta[,"Outcome", drop = FALSE], gaps_col = c(8,27),annotation_colors = list(Outcome = respond_col[c("CR","PR","PD")]))
+```
+
+
+
+
+
+
+
+## Hugo Only
+
+
+
+
+#### Meta Summary
+
+```{r}
+make_sum(meta_table = hugo_metadata, var_name = "Batch", additional_cat = "None")
+make_sum(meta_table = hugo_metadata, var_name = "BRAF", additional_cat = "None")
+make_sum(meta_table = hugo_metadata, var_name = "NRAS", additional_cat = "None")
+make_sum(meta_table = hugo_metadata, var_name = "NF1", additional_cat = "None")
+make_sum(meta_table = hugo_metadata, var_name = "Gender", additional_cat = "None")
+make_sum(meta_table = hugo_metadata, var_name = "Age", additional_cat = "Continuous")
+make_sum(meta_table = hugo_metadata, var_name = "Overall.Survival", additional_cat = "Continuous")
+make_sum(meta_table = hugo_metadata, var_name = "Previous.MAPKi")
+make_sum(meta_table = hugo_metadata, var_name = "Outcome")
+make_sum(meta_table = hugo_metadata, var_name = "M_Stage")
+make_sum(meta_table = hugo_metadata, var_name = "Vital.Status")
+make_sum(meta_table = hugo_metadata, var_name = "biopsy_time")
+make_sum(meta_table = hugo_metadata, var_name = "Anatomical.Location")
+make_sum(meta_table = hugo_metadata, var_name = "Status")
+make_sum(meta_table = hugo_metadata, var_name = "Treatment")
+```
+
+
+# Genes
+
+## Batch Correction
+
+
+```{r}
+res_gene <- intersect(rownames(raw_gene),rownames(hugo_gene))
+response_gene <- cbind(raw_gene[res_gene,rownames(response_samples)], hugo_gene[res_gene,])
+```
+
+
+### PCA Plotting
+
+```{r}
+#create the object
+DESeq.gene.un.h <- DESeqDataSetFromMatrix(countData = hugo_gene[,rownames(hugo_metadata)],
+                                   colData = hugo_metadata,
+                                   design = ~1)
+DESeq.gene.un.h.trans <- DESeq(DESeq.gene.un.h)
+DESeq.gene.un.h.vst <- assay(varianceStabilizingTransformation(DESeq.gene.un.h.trans))
+```
+
+```{r}
+DESeq.gene.un.h.pca <- pca(DESeq.gene.un.h.vst, metadata = colData(DESeq.gene.un.h), removeVar = 0.3)
+```
+
+
+PCA
+
+```{r, fig.height = 8, fig.width = 10}
+nf1_col = c("Unknown" = "#d28d1f" ,"Frame_Shift_Ins H31fs, Splice_Site"="#674769", "S2597*" = "#b7869d",   "wt" =  "#ebab7a", "R2349C" =  "#a020f0", "Q1255*" = "#ffd700", "K615K Splice Site"  = "#ff6ec7", "R1653C"  = "#2e8b57")
+braf_col = c("wt" ="#ebab7a", "L331F" = "#d98c8c", "V600E" ="#d3c143",  "Unknown"  ="#d28d1f", "V600R" ="#8ab8d1",  "V600K" ="#556b2f" , "K483T, D594N"=  "#bebebe" )
+nras_col =c("T50I" = "#9a565e","Q61L" = "#19267c","G13D" = "#642896","Q61K" = "#6267b9","Q61R" = "#caa3d1","wt" = "#ebab7a") 
+batch_col <- c("TCGA" = "#bb0e3d", "UCLA" = "#2D68C4","VIC" = "#866D4B")
+biplot(DESeq.gene.un.h.pca, lab = NULL, colby = "Batch", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Batches") + scale_color_manual(values = batch_col[c("UCLA","VIC")])
+biplot(DESeq.gene.un.h.pca, lab = NULL, colby = "Outcome", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Treatment Outcome") + scale_color_manual(values = respond_col[unique(response_meta$Outcome)])
+biplot(DESeq.gene.un.h.pca, lab = NULL, colby = "Gender", legendPosition = 'right') + ggtitle("PCA, Genes  Expression\nColor by Gender")
+biplot(DESeq.gene.un.h.pca, lab = NULL, colby = "Previous.MAPKi", legendPosition = 'right') + ggtitle("PCA, Genes  Expression\nColor by Previous MAPKi Treatment") + scale_color_manual(values =  c("Y" = "#e40186","N" = "#372131"))
+biplot(DESeq.gene.un.h.pca, lab = NULL, colby = "Vital.Status", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Vital Status")
+biplot(DESeq.gene.un.h.pca, lab = NULL, colby = "BRAF", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by BRAF Mutation") + scale_color_manual(values = braf_col)
+biplot(DESeq.gene.un.h.pca, lab = NULL, colby = "NF1", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by NF1 Mutation") + scale_color_manual(values = nf1_col)
+biplot(DESeq.gene.un.h.pca, lab = NULL, colby = "NRAS", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by NRAS Mutation") + scale_color_manual(values = nras_col)
+DESeq.gene.un.h.pca$metadata$Age <- as.numeric(DESeq.gene.un.h.pca$metadata$Age)
+hugo_metadata$Age <- as.numeric(hugo_metadata$Age)
+biplot(DESeq.gene.un.h.pca, lab = NULL, colby = "Age", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Age")
+
+```
+
+
+Incorporate the batch correction with 
+
+#### Combat-seq
+
+```{r}
+genes.corrected.h.mat <- sva::ComBat_seq(counts = as.matrix(hugo_gene), batch = hugo_metadata$Batch)
+```
+
+
+#### Rerun PCA to see the variation
+
+
+```{r}
+#Create DESeq Subjects
+DESeq.corrected.gene.h <- DESeqDataSetFromMatrix(countData = genes.corrected.h.mat[,rownames(hugo_metadata)],
+                                   colData = hugo_metadata,
+                                   design = ~1)
+```
+
+
+```{r}
+#size factor
+DESeq.corrected.gene.h <- estimateSizeFactors(DESeq.corrected.gene.h)
+#PCA
+DESeq.corrected.gene.h.trans <- DESeq(DESeq.corrected.gene.h)
+DESeq.corrected.gene.h.vst <- assay(vst(DESeq.corrected.gene.h.trans))
+DESeq.corrected.gene.h.pca <- pca(DESeq.corrected.gene.h.vst, metadata = colData(DESeq.corrected.gene.h), removeVar = 0.3)
+```
+
+
+```{r, fig.width = 8, fig.height = 8}
+biplot(DESeq.corrected.gene.h.pca, lab = NULL, colby = "Batch", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by Batches") +  scale_color_manual(values = batch_col)
+biplot(DESeq.corrected.gene.h.pca, lab = NULL, colby = "Outcome", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by Treatment Outcome") + scale_color_manual(values = respond_col[unique(response_meta$Outcome)])
+biplot(DESeq.corrected.gene.h.pca, lab = NULL, colby = "Gender", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by Gender")
+biplot(DESeq.corrected.gene.h.pca, lab = NULL, colby = "Vital.Status", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by Vital Status")
+biplot(DESeq.corrected.gene.h.pca, lab = NULL, colby = "BRAF", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by BRAF Mutation") + scale_color_manual(values = braf_col)
+biplot(DESeq.corrected.gene.h.pca, lab = NULL, colby = "NF1", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by NF1 Mutation") + scale_color_manual(values = nf1_col)
+biplot(DESeq.corrected.gene.h.pca, lab = NULL, colby = "NRAS", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by NRAS Mutation") + scale_color_manual(values = nras_col)
+biplot(DESeq.corrected.gene.h.pca, lab = NULL, colby = "Previous.MAPKi", legendPosition = 'right') + ggtitle("Corrected Gene PCA\nColor by Previous MAPKi Treatment")+ scale_color_manual(values =  c("Y" = "#e40186","N" = "#372131"))
+```
+
+Mutation factors and gender seem to also be contributing to the variation
+
+
+#### Testing
+
+Create the object
+
+```{r}
+#Create DESeq Subjects
+DESeq.gene.h.t <- DESeqDataSetFromMatrix(countData = genes.corrected.h.mat[,rownames(hugo_metadata)],
+                                   colData = hugo_metadata,
+                                   design = ~Outcome)
+```
+
+Perform the test
+```{r}
+DESeq.gene.h.t <- DESeq(DESeq.gene.h.t ,parallel = T,test = "Wald", betaPrior = TRUE)
+resultsNames(DESeq.gene.h.t)
+```
+
+QQ Plot
+
+```{r}
+res_gene_h.all <- as.data.frame(results(DESeq.gene.h.t))
+Norm_quantile<- sort(-log10(seq(1, 1/nrow(res_gene_h.all), length.out = nrow(res_gene_h.all))), decreasing = TRUE)
+res_gene_h.all <-res_gene_h.all[order(res_gene_h.all$padj, decreasing  = FALSE),]
+res_gene_h.all["Normal_Quantile"] <- Norm_quantile
+ggplot(res_gene_h.all, aes(x = Normal_Quantile, y =-log10(padj))) + geom_point()+geom_abline(intercept = 0, slope = 1, color="red") + xlab("Negative Log Normal Quantile (Expected)")+ylab("Negative Log 10 P Values (Observed)")+ggtitle("QQ Plot for Gene, Treatment Response Hugo Dataset")
+```
+
+
+
+Heatmap table
+
+```{r}
+gene_heat_hn_table <- restable(min_fc = 2, max_p = 0.01, n_top_genes = 20, DESeq.gene.h.t)
+gene.h.vst.outcome <- assay(vst(DESeq.gene.h.t))
+gene_heat_hn <- gene.h.vst.outcome[rownames(gene_heat_hn_table),]
+res_gene_h.all$Significant <- rep(NA,nrow(res_gene_h.all))
+res_gene_h.all[rownames(gene_heat_hn),"Significant"] <- gene_annot[rownames(gene_heat_hn),"gene_name"]
+rownames(gene_heat_hn) <- gene_annot[rownames(gene_heat_hn),"gene_name"]
+gene_heat_clust <- hclust(dist(t(gene_heat_hn)))
+hugo_metadata$Outcome <- factor(hugo_metadata$Outcome, levels = c("CR","PR","PD"))
+metadata_col_gene.h <- hugo_metadata[order(hugo_metadata[,"Outcome"],gene_heat_clust$order),] %>% rownames(.)
+gene_heat_hn <- gene_heat_hn[,metadata_col_gene.h]
+```
+
+
+
+#### Visualization
+
+Heatmap
+
+```{r,fig.height = 6, fig.width = 10}
+breaklist <- seq(-3, 3, by = 0.25)
+pheatmap(gene_heat_hn, scale="row",main = "DE Genes, by Treatment Response, Hugo",fontsize = 8, size = 30, color = inferno(25), show_rownames = TRUE, show_colnames = TRUE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = hugo_metadata[,c("Outcome","Batch","BRAF","NRAS","NF1","Previous.MAPKi"), drop = FALSE], gaps_col = c(4,14),annotation_colors = list( Outcome = respond_col[c("CR","PR","PD")], Batch = batch_col[c("UCLA","VIC")], Previous.MAPKi = c("Y" = "#e40186","N" = "#372131"), NF1 = nf1_col, NRAS = nras_col, BRAF = braf_col))
 ```
 
 Volcano Plot
 
 ```{r, fig.height = 18, fig.width = 20}
-selected_features <- rownames(res_gene_rn_selected.hugo)
-hugo.res_gene_rn.all$Selected_gene <- rep("",nrow(hugo.res_gene_rn.all))
-hugo.res_gene_rn.all[selected_features,"Selected_gene"] <- selected_features
-consensus_gene_name.hugo <- intersect(rownames(gene_annot), selected_features)
-hugo.res_gene_rn.all[consensus_gene_name.hugo,"Selected_gene"] <- gene_annot[consensus_gene_name.hugo, "gene_name"]
-EnhancedVolcano(hugo.res_gene_rn.all,lab = hugo.res_gene_rn.all$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "Gene Vocalno, Response Factor\nShowing Any Selected Gene",labSize = 8, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+selected_features <- rownames(gene_heat_hn_table)
+res_gene_h.all$Selected_gene <- rep("",nrow(res_gene_h.all))
+res_gene_h.all[selected_features,"Selected_gene"] <- gene_annot[selected_features, "gene_name"]
+EnhancedVolcano(res_gene_h.all,lab = res_gene_h.all$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.01,FCcutoff = 2,title = "Gene Volcano, Treatment Response\nShowing Any Selected Gene",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
 ### For each specific subgroup
@@ -911,24 +873,20 @@ EnhancedVolcano(hugo.res_gene_rn.all,lab = hugo.res_gene_rn.all$Selected_gene , 
 **Complete Response**
 
 ```{r, fig.height = 18, fig.width = 20}
-cr.hugo.gene <- results(DESeq.gene.rn.hugo, independentFiltering = TRUE, contrast = list(c("RECISTCR"), c("RECISTPR","RECISTPD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
-cr.hugo.gene$Selected_gene <- rep("",nrow(cr.hugo.gene))
-#for the gene annotation, use genes selected by any methods
-cr_consensus_gene.hugo <- intersect(rownames(gene_annot), union(selected_genes_rn.hugo$boruta, union(selected_genes_rn.hugo$lrt, gene_cr.feat.hugo)))
-cr.hugo.gene[cr_consensus_gene.hugo,"Selected_gene"] <- gene_annot[cr_consensus_gene.hugo, "gene_name"]
-EnhancedVolcano(cr.hugo.gene,lab = cr.hugo.gene$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "Gene Vocalno, Hugo, Complete Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 8, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+cr.h.gene <- results(DESeq.gene.h.t, independentFiltering = TRUE, contrast = list(c("OutcomeCR"), c("OutcomePR","OutcomePD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
+cr.h.gene$gene_names <- rep("",nrow(cr.h.gene))
+cr.h.gene[,"gene_names"] <- gene_annot[rownames(cr.h.gene), "gene_name"]
+EnhancedVolcano(cr.h.gene,lab = cr.h.gene$gene_names , x = 'log2FoldChange', y = 'padj', pCutoff = 0.01,FCcutoff = 2,title = "Gene Volcano, Hugo, Complete Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
 
 **Partial Response**
 
 ```{r, fig.height = 18, fig.width = 20}
-pr.hugo.gene <- results(DESeq.gene.rn.hugo, independentFiltering = TRUE, contrast = list(c("RECISTPR"), c("RECISTCR","RECISTPD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
-pr.hugo.gene$Selected_gene <- rep("",nrow(pr.hugo.gene))
-#for the gene annotation, use genes selected by any methods
-pr_consensus_gene.hugo<- intersect(rownames(gene_annot), union(selected_genes_rn.hugo$boruta, union(selected_genes_rn.hugo$lrt, gene_pr.feat.hugo)))
-pr.hugo.gene[pr_consensus_gene.hugo,"Selected_gene"] <- gene_annot[pr_consensus_gene.hugo, "gene_name"]
-EnhancedVolcano(pr.hugo.gene,lab = pr.hugo.gene$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "Gene Vocalno, Hugo, Partial Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 8, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+pr.h.gene <- results(DESeq.gene.h.t, independentFiltering = TRUE, contrast = list(c("OutcomePR"), c("OutcomeCR","OutcomePD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
+pr.h.gene$gene_names <- rep("",nrow(pr.h.gene))
+pr.h.gene[,"gene_names"] <- gene_annot[rownames(pr.h.gene), "gene_name"]
+EnhancedVolcano(pr.h.gene,lab = pr.h.gene$gene_names , x = 'log2FoldChange', y = 'padj', pCutoff = 0.01,FCcutoff = 2,title = "Gene Volcano, Hugo, Partial Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+ylim(0,5)+xlim(-7,7)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
 
@@ -936,190 +894,161 @@ EnhancedVolcano(pr.hugo.gene,lab = pr.hugo.gene$Selected_gene , x = 'log2FoldCha
 **Progressive Disease**
 
 ```{r, fig.height = 18, fig.width = 20}
-pd.hugo.gene <- results(DESeq.gene.rn.hugo, independentFiltering = TRUE, contrast = list(c("RECISTPD"), c("RECISTCR","RECISTPR")), listValues=c(1, -1/2)) %>% as.data.frame(.)
-pd.hugo.gene$Selected_gene <- rep("",nrow(pd.hugo.gene))
-#for the gene annotation, use genes selected by any methods
-pd_consensus_gene.hugo <- intersect(rownames(gene_annot), union(selected_genes_rn.hugo$boruta, union(selected_genes_rn.hugo$lrt, gene_pd.feat.hugo)))
-pd.hugo.gene[pd_consensus_gene.hugo,"Selected_gene"] <- gene_annot[pd_consensus_gene.hugo, "gene_name"]
-EnhancedVolcano(pd.hugo.gene,lab = pd.hugo.gene$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "Gene Vocalno, Hugo, Progressive Disease vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 8, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+pd.h.gene <- results(DESeq.gene.h.t, independentFiltering = TRUE, contrast = list(c("OutcomePD"), c("OutcomeCR","OutcomePR")), listValues=c(1, -1/2)) %>% as.data.frame(.)
+pd.h.gene$gene_names <- rep("",nrow(pd.h.gene))
+pd.h.gene[,"gene_names"] <- gene_annot[rownames(pd.h.gene), "gene_name"]
+EnhancedVolcano(pd.h.gene,lab = pd.h.gene$gene_names , x = 'log2FoldChange', y = 'padj', pCutoff = 0.01,FCcutoff = 2,title = "Gene Volcano, Hugo, Progressive Disease vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+ylim(0,8)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
 
 
-## HERVs
+# HERVs
+
+## Batch Correction
 
 ### PCA Plotting
 
 ```{r}
 #create the object
-DESeq.herv.un.r.hugo <- DESeqDataSetFromMatrix(countData = hugo_herv[,rownames(hugo_metadata)],
+DESeq.herv.un.h <- DESeqDataSetFromMatrix(countData = hugo_herv[,rownames(hugo_metadata)],
                                    colData = hugo_metadata,
                                    design = ~1)
-
-#size factor
-DESeq.herv.un.r.hugo <- estimateSizeFactors(DESeq.herv.un.r.hugo)
-#normalize & log-sized
-DESeq.herv.un.r.hugo_norm <- counts(DESeq.herv.un.r.hugo ,normalized = TRUE)
-boxplot(log2(DESeq.herv.un.r.hugo_norm+1), notch=FALSE, main = "Size-factor-normalized read counts\nHERV Counts Treatment", ylab="log2(read counts)", cex = .6, las = 2)
-assay(DESeq.herv.un.r.hugo,"log.norm.counts") <- log2(DESeq.herv.un.r.hugo_norm+1)
-
-DESeq.herv.un.r.hugo.trans <- DESeq(DESeq.herv.un.r.hugo)
-DESeq.herv.un.r.hugo.vst <- assay(varianceStabilizingTransformation(DESeq.herv.un.r.hugo.trans))
+DESeq.herv.un.h.trans <- DESeq(DESeq.herv.un.h)
+DESeq.herv.un.h.vst <- assay(varianceStabilizingTransformation(DESeq.herv.un.h.trans))
 ```
 
+
 ```{r}
-DESeq.herv.un.r.hugo.pca <- pca(DESeq.herv.un.r.hugo.vst, metadata = colData(DESeq.herv.un.r.hugo), removeVar = 0.2)
+DESeq.herv.un.h.pca <- pca(DESeq.herv.un.h.vst, metadata = colData(DESeq.herv.un.h), removeVar = 0.2)
 ```
 
 
 PCA
 
 ```{r, fig.height = 8, fig.width = 10}
-biplot(DESeq.herv.un.r.hugo.pca , lab = NULL, colby = "RECIST", legendPosition = 'right') + ggtitle("PCA, HERV Expression\nColor by Response Factor, Hugo")
-biplot(DESeq.herv.un.r.hugo.pca , lab = NULL, colby = "Gender", legendPosition = 'right') + ggtitle("PCA, HERV Expression\nColor by Gender, Hugo")
-biplot(DESeq.herv.un.r.hugo.pca , lab = NULL, colby = "Disease.Status", legendPosition = 'right') + ggtitle("PCA, HERV Expression\nColor by Disease Stage, Hugo")
-biplot(DESeq.herv.un.r.hugo.pca , lab = NULL, colby = "Previous.MAPKi", legendPosition = 'right') + ggtitle("PCA, HERV Expression\nColor by Previous MAPKi Treatment, Hugo")
-DESeq.herv.un.r.hugo.pca$metadata$Age <- as.numeric(DESeq.herv.un.r.hugo.pca$metadata$Age)
-biplot(DESeq.herv.un.r.hugo.pca, lab = NULL, colby = "Age", legendPosition = 'right') + ggtitle("PCA, GHERV Expression\nColor by Age")
-biplot(DESeq.herv.un.r.hugo.pca, lab = NULL, colby = "Study_Site", legendPosition = 'right') + ggtitle("PCA, HERV Expression\nColor by Study Site")
-```
+biplot(DESeq.herv.un.h.pca, lab = NULL, colby = "Batch", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Batches") + scale_color_manual(values = batch_col[c("UCLA","VIC")])
+biplot(DESeq.herv.un.h.pca, lab = NULL, colby = "Outcome", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Treatment Outcome") + scale_color_manual(values = respond_col[unique(hugo_metadata$Outcome)])
+biplot(DESeq.herv.un.h.pca, lab = NULL, colby = "Gender", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Gender")
+biplot(DESeq.herv.un.h.pca, lab = NULL, colby = "Vital.Status", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Vital Status")
+biplot(DESeq.herv.un.h.pca, lab = NULL, colby = "BRAF", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by BRAF Mutation")
+biplot(DESeq.herv.un.h.pca, lab = NULL, colby = "Previous.MAPKi", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by MAPKi Treatment")
+biplot(DESeq.herv.un.h.pca, lab = NULL, colby = "NF1", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by NF1 Mutation")
+biplot(DESeq.herv.un.h.pca, lab = NULL, colby = "NRAS", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by NRAS Mutation")
+biplot(DESeq.herv.un.h.pca, lab = NULL, colby = "Age", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Age")
 
-Had to incorporate Study Site as a covar
-
-```{r}
-#subset only the PCA calculated genes
-filtered_matrix_herv.hugo <- hugo_herv[DESeq.herv.un.r.hugo.pca$xvars,rownames(hugo_metadata)]
 ```
 
 
+Incorporate the batch correction with 
+
+#### Combat-seq
+
 ```{r}
-#create the object
-DESeq.herv.rn.hugo <- DESeqDataSetFromMatrix(countData = filtered_matrix_herv.hugo[,rownames(hugo_metadata)],
+herv.corrected.h.mat <- sva::ComBat_seq(counts = as.matrix(hugo_herv), batch = hugo_metadata$Batch)
+```
+
+
+#### Rerun PCA to see the variation
+
+
+```{r}
+#Create DESeq Subjects
+DESeq.corrected.herv.h <- DESeqDataSetFromMatrix(countData = herv.corrected.h.mat[,rownames(hugo_metadata)],
                                    colData = hugo_metadata,
-                                   design = ~ Study_Site + RECIST)
-DESeq.herv.rn.hugo$RECIST <- relevel(DESeq.herv.rn.hugo$RECIST, ref = "CR")
+                                   design = ~1)
 ```
 
+
+```{r}
+#size factor
+DESeq.corrected.herv.h<- estimateSizeFactors(DESeq.corrected.herv.h)
+#PCA
+DESeq.corrected.herv.h.trans <- DESeq(DESeq.corrected.herv.h)
+DESeq.corrected.herv.h.vst <- assay(varianceStabilizingTransformation(DESeq.corrected.herv.h.trans))
+DESeq.corrected.herv.h.pca <- pca(DESeq.corrected.herv.h.vst, metadata = colData(DESeq.corrected.herv.h), removeVar = 0.2)
+```
+
+
+```{r, fig.width = 8, fig.height = 8}
+biplot(DESeq.corrected.herv.h.pca, lab = NULL, colby = "Batch", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by Batches") +  scale_color_manual(values = batch_col)
+biplot(DESeq.corrected.herv.h.pca, lab = NULL, colby = "Outcome", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by Treatment Outcome") + scale_color_manual(values = respond_col[unique(response_meta$Outcome)])
+biplot(DESeq.corrected.herv.h.pca, lab = NULL, colby = "Gender", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by Gender")
+biplot(DESeq.corrected.herv.h.pca, lab = NULL, colby = "Vital.Status", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by Vital Status")
+biplot(DESeq.corrected.herv.h.pca, lab = NULL, colby = "BRAF", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by BRAF Mutation")+ scale_color_manual(values = braf_col)
+biplot(DESeq.corrected.herv.h.pca, lab = NULL, colby = "NF1", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by NF1 Mutation") + scale_color_manual(values = nf1_col)
+biplot(DESeq.corrected.herv.h.pca, lab = NULL, colby = "NRAS", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by NRAS Mutation") + scale_color_manual(values = nras_col)
+biplot(DESeq.corrected.herv.h.pca, lab = NULL, colby = "Previous.MAPKi", legendPosition = 'right') + ggtitle("Corrected HERV PCA\nColor by Previous MAPKi Treatment") + scale_color_manual(values = c("Y" = "#e40186","N" = "#372131"))
+```
+
+MAPKi Treatment seems to be also contributing to the PCA
 
 #### Testing
 
+Create the object
+
+```{r}
+#Create DESeq Subjects
+DESeq.herv.h.t <- DESeqDataSetFromMatrix(countData = herv.corrected.h.mat[,rownames(hugo_metadata)],
+                                   colData = hugo_metadata,
+                                   design = ~ Outcome)
+```
+
 Perform the test
 ```{r}
-DESeq.herv.rn.hugo <- DESeq(DESeq.herv.rn.hugo ,parallel = T,test = "Wald", betaPrior = TRUE)
-resultsNames(DESeq.herv.rn.hugo)
+DESeq.herv.h.t <- DESeq(DESeq.herv.h.t ,parallel = T,test = "Wald", betaPrior = TRUE)
+resultsNames(DESeq.herv.h.t)
 ```
 
 QQ Plot
 
 ```{r}
-hugo.res_herv_rn.all <- as.data.frame(results(DESeq.herv.rn.hugo))
-Norm_quantile<- sort(-log10(seq(1, 1/nrow(hugo.res_herv_rn.all), length.out = nrow(hugo.res_herv_rn.all))), decreasing = TRUE)
-hugo.res_herv_rn.all <-hugo.res_herv_rn.all[order(hugo.res_herv_rn.all$padj, decreasing  = FALSE),]
-hugo.res_herv_rn.all["Normal_Quantile"] <- Norm_quantile
-ggplot(hugo.res_herv_rn.all, aes(x = Normal_Quantile, y =-log10(padj))) + geom_point()+geom_abline(intercept = 0, slope = 1, color="red") + xlab("Negative Log Normal Quantile (Expected)")+ylab("Negative Log 10 P Values (Observed)")+ggtitle("QQ Plot for HERVs, Treatment Response")
-```
-
-
-### Feature Selection
-
-#### LRT
-
-```{r}
-DESeq.herv.rn.lrt.hugo <- DESeqDataSetFromMatrix(countData = filtered_matrix_herv.hugo[,rownames(hugo_metadata)],
-                                   colData = hugo_metadata,
-                                   design = ~ Study_Site + RECIST)
-DESeq.herv.rn.lrt.hugo <- DESeq(DESeq.herv.rn.lrt.hugo ,parallel = T,test = "LRT", reduced = ~1)
-res_herv_rn.hugo <- restable(min_fc = 2, max_p = 0.01, n_top_genes = 20, DESeq.herv.rn.lrt.hugo)
-```
-
-
-```{r}
-selected_hervs_rn.hugo <- list()
-selected_hervs_rn.hugo$lrt <- rownames(res_herv_rn.hugo) 
+res_herv_hn.all <- as.data.frame(results(DESeq.herv.h.t))
+Norm_quantile<- sort(-log10(seq(1, 1/nrow(res_herv_hn.all), length.out = nrow(res_herv_hn.all))), decreasing = TRUE)
+res_herv_hn.all <-res_herv_hn.all[order(res_herv_hn.all$padj, decreasing  = FALSE),]
+res_herv_hn.all["Normal_Quantile"] <- Norm_quantile
+ggplot(res_herv_hn.all, aes(x = Normal_Quantile, y =-log10(padj))) + geom_point()+geom_abline(intercept = 0, slope = 1, color="red") + xlab("Negative Log Normal Quantile (Expected)")+ylab("Negative Log 10 P Values (Observed)")+ggtitle("QQ Plot for HERVs, Treatment Response")
 ```
 
 
 
-#### Boruta
+### Volcano for each specific subgroup
 
-```{r}
-herv.rn.vst.hugo <- assay(varianceStabilizingTransformation(DESeq.herv.rn.hugo))
-ntop.herv.rn.hugo <- nrow(herv.rn.vst.hugo)
-vars.herv.rn.hugo <- rowVars(herv.rn.vst.hugo)
-Vstmat.herv.rn.hugo <- herv.rn.vst.hugo[order(-vars.herv.rn.hugo)[1:ntop.herv.rn.hugo],]
+**Complete Response**
+
+```{r, fig.height = 18, fig.width = 20}
+cr.herv.h <- results(DESeq.herv.h.t, independentFiltering = TRUE, contrast = list(c("OutcomeCR"), c("OutcomePR","OutcomePD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
+cr.herv.h[,"names"] <- rownames(cr.herv.h)
+EnhancedVolcano(cr.herv.h,lab = cr.herv.h$names , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 1,title = "HERV Volcano, Hugo, Complete Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+ylim(0,6)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
 
-```{r, message = FALSE}
-set.seed(12345678)
-bor.orig.rn.herv.hugo <- Boruta(x = t(Vstmat.herv.rn.hugo), y = hugo_metadata$RECIST, doTrace=2, ntree = 1000, maxRuns = 1000)
-print(bor.orig.rn.herv.hugo)
-bor.model.rn.herv.hugo <- TentativeRoughFix(bor.orig.rn.herv.hugo)
-print(bor.model.rn.herv.hugo)
-selected_hervs_rn.hugo$boruta <- names(bor.model.rn.herv.hugo$finalDecision)[bor.model.rn.herv.hugo$finalDecision == 'Confirmed']
+**Partial Response**
+
+```{r, fig.height = 18, fig.width = 20}
+pr.herv.h<- results(DESeq.herv.h.t, independentFiltering = TRUE, contrast = list(c("OutcomePR"), c("OutcomeCR","OutcomePD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
+pr.herv.h[,"names"] <- rownames(pr.herv.h)
+EnhancedVolcano(pr.herv.h,lab = pr.herv.h$names , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 1,title = "HERV Volcano, TCGA, Partial Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
-#### LASSO
 
-```{r}
-herv.rn_cv.hugo <- cv.glmnet(x = t(Vstmat.herv.rn.hugo), y = hugo_metadata$RECIST, family="multinomial",intercept = F, alpha=1)
-herv.rn.hugo <- coef(herv.rn_cv.hugo , herv.rn_cv.hugo$lambda.1se)
+**Progressive Disease**
 
-herv_rn.features.cr.hugo<- as.data.frame(herv.rn.hugo$CR)
-herv_cr.feat.hugo<- rownames(herv_rn.features.cr.hugo)[herv_rn.features.cr.hugo!=0]
-
-herv_rn.features.pd.hugo <- as.data.frame(herv.rn.hugo$PD)
-herv_pd.feat.hugo<- rownames(herv_rn.features.pd.hugo)[herv_rn.features.pd.hugo!=0]
-
-herv_rn.features.pr.hugo <- as.data.frame(herv.rn.hugo$PR)
-herv_pr.feat.hugo<- rownames(herv_rn.features.pr.hugo)[herv_rn.features.pr.hugo!=0]
-
-selected_herv.rn.lasso.hugo <-append(herv_cr.feat.hugo,append(herv_pr.feat.hugo,herv_pd.feat.hugo))
-selected_herv.rn.lasso.hugo <-selected_herv.rn.lasso.hugo[!duplicated(selected_herv.rn.lasso.hugo)]
-
-selected_hervs_rn.hugo$lasso <- selected_herv.rn.lasso.hugo
-``` 
-
-
-#### Consensus
-
-```{r}
-upset(fromList(selected_hervs_rn.hugo), 
-      sets=c('lrt', 'boruta','lasso'), 
-      order.by = "freq",
-      text.scale = c(1.5, 1.5, 1.3, 1.3, 1.3, 1.3))
+```{r, fig.height = 18, fig.width = 20}
+pd.herv.h <- results(DESeq.herv.h.t, independentFiltering = TRUE, contrast = list(c("OutcomePD"), c("OutcomeCR","OutcomePR")), listValues=c(1, -1/2)) %>% as.data.frame(.)
+pd.herv.h[,"names"] <- rownames(pd.herv.h)
+EnhancedVolcano(pd.herv.h,lab =pd.herv.h$names , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 1,title = "HERV Volcano, TCGA, Progressive Disease vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+ylim(0,5)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
 
 Heatmap table
 
 ```{r}
-#Add a column to res_gene_pm about the feature selection results
-hugo.res_herv_rn.all$Feature_Select <- rep(NA,nrow(hugo.res_herv_rn.all))
-#lrt
-hugo.res_herv_rn.all[selected_hervs_rn.hugo$lrt,"Feature_Select"] <- "LRT Unique"
-#boruta
-hugo.res_herv_rn.all[selected_hervs_rn.hugo$boruta,"Feature_Select"] <- "BORUTA Unique"
-#lasso
-hugo.res_herv_rn.all[selected_hervs_rn.hugo$lasso,"Feature_Select"] <- "LASSO Unique"
-#boruta & lasso
-las_bor <- intersect(selected_hervs_rn.hugo$boruta,selected_hervs_rn.hugo$lasso)
-hugo.res_herv_rn.all[las_bor,"Feature_Select"] <- "BORUTA and LASSO"
-#boruta & lrt
-bor_lrt <- intersect(selected_hervs_rn.hugo$boruta,selected_hervs_rn.hugo$lrt)
-hugo.res_herv_rn.all[bor_lrt,"Feature_Select"] <- "BORUTA and LRT"
-#lasso & lrt
-las_lrt <- intersect(selected_hervs_rn.hugo$lasso,selected_hervs_rn.hugo$lrt)
-hugo.res_herv_rn.all[las_lrt,"Feature_Select"] <- "LASSO and LRT"
-#all three
-all_3_herv <- intersect(las_lrt,selected_hervs_rn.hugo$boruta)
-hugo.res_herv_rn.all[all_3_herv,"Feature_Select"] <- "All Consensus"
-#none (to be removed)
-herv_heat_rn.hugo <- herv.rn.vst.hugo[rownames(hugo.res_herv_rn.all)[(!is.na(hugo.res_herv_rn.all$Feature_Select))],]
-res_herv_rn_selected.hugo <- hugo.res_herv_rn.all[rownames(hugo.res_herv_rn.all)[(!is.na(hugo.res_herv_rn.all$Feature_Select))],]
-hugo.herv.clust <- hclust(dist(t(herv_heat_rn.hugo)))
-hugo.herv.order <- hugo_metadata[order(hugo_metadata$RECIST,hugo.herv.clust$order),] %>% rownames(.)
-herv_heat_rn.hugo <- herv_heat_rn.hugo[,hugo.herv.order]
+herv_r_selected.h <- union(pd.herv.h %>% filter(., padj <= 0.05 & (log2FoldChange >= 1 | log2FoldChange <=1 )) %>% rownames(.), union(pr.herv.h %>% filter(., padj <= 0.05 & (log2FoldChange >= 1 | log2FoldChange <=1 )) %>% rownames(.), cr.herv.h %>% filter(., padj <= 0.05 & (log2FoldChange >= 1 | log2FoldChange <=1 )) %>% rownames(.)))
+hugo.herv.vst <- assay(varianceStabilizingTransformation(DESeq.herv.h.t))
+herv_heat_rn.h <- hugo.herv.vst[herv_r_selected.h,]
+herv_heat_h_clust <- hclust(dist(t(herv_heat_rn.h)))
+metadata_col_herv.h<- hugo_metadata[order(hugo_metadata[,"Outcome"],herv_heat_h_clust$order),] %>% rownames(.)
+herv_heat_rn.h<- herv_heat_rn.h[,metadata_col_herv.h]
 ```
 
 
@@ -1128,58 +1057,128 @@ herv_heat_rn.hugo <- herv_heat_rn.hugo[,hugo.herv.order]
 
 Heatmap
 
-```{r,fig.height = 18, fig.width = 20}
+```{r,fig.height = 6, fig.width = 10}
 breaklist <- seq(-3, 3, by = 0.25)
-feature_col_hervs <- feature_col[unique(res_herv_rn_selected.hugo$Feature_Select)]
-pheatmap(herv_heat_rn.hugo, scale="row",main = "DE HERVs, by Therapy Response, Hugo",fontsize = 16, size = 35, color = inferno(25), show_rownames = FALSE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = hugo_metadata[,"RECIST", drop = FALSE],annotation_row = res_herv_rn_selected.hugo[,"Feature_Select",drop = FALSE], gaps_col = c(4,14),annotation_colors = list(Feature_Select = feature_col_hervs, RECIST = status_col))
-```
-
-Volcano Plot
-
-```{r, fig.height = 18, fig.width = 20}
-selected_features <- rownames(res_herv_rn_selected.hugo)
-hugo.res_herv_rn.all$Selected_gene <- rep("",nrow(hugo.res_herv_rn.all))
-hugo.res_herv_rn.all[selected_features,"Selected_gene"] <- selected_features
-EnhancedVolcano(hugo.res_herv_rn.all,lab = hugo.res_herv_rn.all$Selected_gene, x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "HERV Vocalno Treatment Response, Hugo\nShowing Any Selected Gene",labSize = 10,  captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "yellow", "red2"),pointSize = 3)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+pheatmap(herv_heat_rn.h, scale="row",main = "DE HERVs, Hugo, by Treatment Response",fontsize = 8, size = 15, color = inferno(25), show_rownames = TRUE, show_colnames = TRUE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score",annotation_col = hugo_metadata[,c("Outcome","Batch","BRAF","NRAS","NF1","Previous.MAPKi"), drop = FALSE], gaps_col = c(4,14),annotation_colors = list( Outcome = respond_col[c("CR","PR","PD")], Batch = batch_col[c("UCLA","VIC")], Previous.MAPKi = c("Y" = "#e40186","N" = "#372131"), NF1 = nf1_col, NRAS = nras_col, BRAF = braf_col))
 ```
 
 
-#### Each specific subgroup
+### Survival
 
+Make survival table
 
-**Complete Response**
+```{r}
+`%ni%` <- Negate(`%in%`)
 
-```{r, fig.height = 18, fig.width = 20}
-cr.hugo.herv <- results(DESeq.herv.rn.hugo, independentFiltering = TRUE, contrast = list(c("RECISTCR"), c("RECISTPR","RECISTPD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
-cr.hugo.herv$Selected_gene <- rep("",nrow(cr.hugo.herv))
-#for annotation, use hervs selected by any methods
-cr_consensus_herv.hugo <- union(selected_hervs_rn.hugo$boruta, union(selected_hervs_rn.hugo$lrt, herv_cr.feat.hugo))
-cr.hugo.herv[cr_consensus_herv.hugo,"Selected_gene"] <- cr_consensus_herv.hugo
-EnhancedVolcano(cr.hugo.herv,lab = cr.hugo.herv$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "HERV Vocalno, Hugo, Complete Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+hugo_surv <-  dplyr::select(hugo_metadata, Group = c("Outcome" ), Vital_status = c("Vital.Status"), Survival.time = c("Overall.Survival"))
+
+hugo_surv$Group <- as.factor(hugo_surv$Group)
+hugo_surv$Vital_status <- as.numeric(hugo_surv$Vital_status)
+hugo_surv$Survival.time <- as.numeric(hugo_surv$Survival.time)
+
+#take out na rows
+hugo_surv <- hugo_surv[!is.na(hugo_surv$Survival.time),]
 ```
 
 
-**Partial Response**
+### The Survival Analysis
 
-```{r, fig.height = 18, fig.width = 20}
-pr.hugo.herv <- results(DESeq.herv.rn.hugo, independentFiltering = TRUE, contrast = list(c("RECISTPR"), c("RECISTCR","RECISTPD")), listValues=c(1, -1/2)) %>% as.data.frame(.)
-pr.hugo.herv$Selected_gene <- rep("",nrow(pr.hugo.herv))
-#for annotation, use hervs selected by any methods
-pr_consensus_herv.hugo <- union(selected_hervs_rn.hugo$boruta, union(selected_hervs_rn.hugo$lrt, herv_pr.feat.hugo))
-pr.hugo.herv[pr_consensus_herv.hugo,"Selected_gene"] <- pr_consensus_herv.hugo
-EnhancedVolcano(pr.hugo.herv,lab = pr.hugo.herv$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "HERV Vocalno, Hugo, Partial Response vs. All\nLabeled Gene Name Selected by any Feature Selections",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+```{r}
+hugo_surv_tab <- survfit(Surv(Survival.time, Vital_status) ~ Group,
+    conf.type = "log", data = hugo_surv)
+ggsurvplot(hugo_surv_tab, pval = TRUE, palette = as.character(respond_col[c("CR","PR","PD")]))
+```
+
+### Count Plot
+
+```{r}
+plot_contrast <- function(count_table, metadata,category, herv, title = "Selected Counts",col = c("#E69F00", "#56B4E9")){
+  count_hervs <- cbind(t(count_table[herv,rownames(metadata), drop = FALSE]), metadata[, category,drop = FALSE])
+  colnames(count_hervs) <- c("HERV","Category")
+  herv_plot <- ggplot(count_hervs,aes(x = Category, y = HERV, color = Category)) + geom_boxplot(outlier.shape = NA)+ geom_jitter(size = 1, shape=16, position=position_jitter(0.2))+ stat_summary(fun.y=mean, geom="point", shape=19, size=3, color = "red")+scale_color_manual(values = col)+xlab(NULL)+ ylab(" Normalized Counts")+ggtitle(title)+theme(plot.title = element_text(size = 15, face = "bold"),axis.title=element_text(size=15,face="bold"),legend.title = element_text(size = 15,face="bold"),axis.text = element_text(size = 15),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1))
+  return(print(herv_plot))}
+```
+
+```{r, fig.height = 5, fig.width = 3}
+#print out the up-regulated hervs in PD
+#print(pd.herv.h %>% filter(., padj <= 0.05 & log2FoldChange >= 1) %>% rownames(.))
+# "MER41_17q23.3b"  "MER4_7p11.2f"    "MER4_20q13.13"   "HERV9_17q11.2b"  "PABLA_12q13.13"  "MER4_10q25.1a"  
+# "MER41_7q34b"     "HERVH_2q31.1b"   "HARLEQUIN_7q33b"
+corrected.norm.count.h.r <- counts(DESeq.herv.h.t, normalized = TRUE)
+MER41_17q23.3b_r <- plot_contrast(corrected.norm.count.h.r, metadata = hugo_metadata, category = "Outcome", herv = "MER41_17q23.3b", title = "MER41_17q23.3b", col = c(respond_col[c("CR","PR","PD")]))
+
+MER4_7p11.2f_r <- plot_contrast(corrected.norm.count.h.r, metadata = hugo_metadata, category = "Outcome", herv = "MER4_7p11.2f", title = "MER4_7p11.2f", col = c(respond_col[c("CR","PR","PD")]))
+
+MER4_20q13.13_r <- plot_contrast(corrected.norm.count.h.r, metadata = hugo_metadata, category = "Outcome", herv = "MER4_20q13.13", title = "MER4_20q13.13", col = c(respond_col[c("CR","PR","PD")]))
+
+MER4_10q25.1a_r <- plot_contrast(corrected.norm.count.h.r, metadata = hugo_metadata, category = "Outcome", herv = "MER4_10q25.1a", title = "MER4_10q25.1a", col = c(respond_col[c("CR","PR","PD")]))
+
+MER41_7q34b_r <- plot_contrast(corrected.norm.count.h.r, metadata = hugo_metadata, category = "Outcome", herv = "MER41_7q34b", title = "MER41_7q34b", col = c(respond_col[c("CR","PR","PD")]))
+
+HERV9_17q11.2b_r <- plot_contrast(corrected.norm.count.h.r, metadata = hugo_metadata, category = "Outcome", herv = "HERV9_17q11.2b", title = "HERV9_17q11.2b", col = c(respond_col[c("CR","PR","PD")]))
+
+PABLA_12q13.13_r <- plot_contrast(corrected.norm.count.h.r, metadata = hugo_metadata, category = "Outcome", herv = "PABLA_12q13.13", title = "PABLA_12q13.13", col = c(respond_col[c("CR","PR","PD")]))
+
+HERVH_2q31.1b_r <- plot_contrast(corrected.norm.count.h.r, metadata = hugo_metadata, category = "Outcome", herv = "HERVH_2q31.1b", title = "HERVH_2q31.1b", col = c(respond_col[c("CR","PR","PD")]))
+
+HARLEQUIN_7q33b_r <- plot_contrast(corrected.norm.count.h.r, metadata = hugo_metadata, category = "Outcome", herv = "HARLEQUIN_7q33b", title = "HARLEQUIN_7q33b", col = c(respond_col[c("CR","PR","PD")]))
+```
+
+```{r, fig.height = 12, fig.width = 9}
+
+MER41_17q23.3b_r +  MER4_7p11.2f_r + MER4_20q13.13_r + HERV9_17q11.2b_r + PABLA_12q13.13_r +  MER4_10q25.1a_r +  MER41_7q34b_r +  HERVH_2q31.1b_r +  HARLEQUIN_7q33b_r + plot_layout(ncol = 3, nrow = 3)
+
+```
+
+### Upset Plot/Venn Diagram of HERVs (Metastasis, C3 Survival, PD)
+
+```{r, eval = FALSE}
+#load results from prev analysis
+load("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/2.Primary vs. Metastatic TCGA-SKCM.RData")
+load("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/3.Clustering TCGA-SKCM.RData")
 ```
 
 
-
-**Progressive Disease**
-
-```{r, fig.height = 18, fig.width = 20}
-pd.hugo.herv <- results(DESeq.herv.rn.hugo, independentFiltering = TRUE, contrast = list(c("RECISTPD"), c("RECISTCR","RECISTPR")), listValues=c(1, -1/2)) %>% as.data.frame(.)
-pd.hugo.herv$Selected_gene <- rep("",nrow(pd.hugo.herv))
-#for annotation, use hervs selected by any methods
-pd_consensus_herv.hugo <- union(selected_hervs_rn.hugo$boruta, union(selected_hervs_rn.hugo$lrt, herv_pd.feat.hugo))
-pd.hugo.herv[pd_consensus_herv.hugo,"Selected_gene"] <- pd_consensus_herv.hugo
-EnhancedVolcano(pd.hugo.herv,lab = pd.hugo.herv$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.05,FCcutoff = 2,title = "HERV Vocalno, Hugo, Progressive Disease vs. All\nLabeled Gene Name Selected by any Feature Selections (p threshold = 0.05)",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
+```{r, fig.width = 5, fig.height =5}
+pm_up <- filter(res_herv_pm.all, !is.na(Selected_gene) & log2FoldChange >= 2 & padj <= 0.01) %>% rownames(.)
+c3_up <- filter(C3_clusters.tcga.herv, !is.na(Selected_gene) & log2FoldChange >= 2 & padj <= 0.01) %>% rownames(.)
+pd_up <- filter(pd.herv.h, padj <= 0.05 & (log2FoldChange >= 1)) %>% rownames(.)
+#upregulation in metastasis, worst survival cluster, and progressive disease for response treatment
+bad_prog_hervs <- list(Metastasis_HERV = pm_up, C3_Cluster = c3_up, Progressive_Disease = pd_up)
+ggVennDiagram(bad_prog_hervs, category.names = c("Metastasis","Cluster 3", "Progressive\nDisease"), set_color = c(cluster_col_h["Metastatic"], cluster_col_h["HERV_Cluster3"], respond_col["PD"]), set_size = 2, label = "count")+ scale_color_manual(values = as.character(c(cluster_col_h["Metastatic"], cluster_col_h["HERV_Cluster3"], respond_col["PD"]))) + scale_fill_gradient(low = "white", high = "navy") + guides(fill = guide_legend(title = "Number of HERV Loci")) + theme(legend.position = "bottom")
 ```
+
+
+```{r}
+upset(fromList(bad_prog_hervs), 
+      sets=c('Metastasis_HERV', 'C3_Cluster','Progressive_Disease'), 
+      order.by = "freq",
+      text.scale = c(1.5, 1.5, 1.3, 1.3, 1.3, 1.3))
+
+```
+
+```{r, fig.width = 5, fig.height =5}
+pm_dn <- filter(res_herv_pm.all, !is.na(Selected_gene) & log2FoldChange <= -2 & padj <= 0.01) %>% rownames(.)
+c3_dn <- filter(C3_clusters.tcga.herv, !is.na(Selected_gene) & log2FoldChange <= -2 & padj <= 0.01) %>% rownames(.)
+pd_dn <- filter(pd.herv.h, padj <= 0.05 & (log2FoldChange <= -1)) %>% rownames(.)
+#upregulation in metastasis, worst survival cluster, and progressive disease for response treatment
+bad_prog_hervs_dn <- list(Metastasis_HERV = pm_dn, C3_Cluster = c3_dn, Progressive_Disease = pd_dn)
+ggVennDiagram(bad_prog_hervs_dn,category.names = c("Metastasis","Cluster 3", "Progressive\nDisease"), set_color = c(cluster_col_h["Metastatic"], cluster_col_h["HERV_Cluster3"], respond_col["PD"]), set_size = 2, label = "count")+ scale_color_manual(values = as.character(c(cluster_col_h["Metastatic"], cluster_col_h["HERV_Cluster3"], respond_col["PD"]))) + scale_fill_gradient(low = "white", high = "navy") + guides(fill = guide_legend(title = "Number of HERV Loci")) + theme(legend.position = "bottom")
+```
+
+```{r}
+upset(fromList(bad_prog_hervs_dn), 
+      sets=c('Metastasis_HERV', 'C3_Cluster','Progressive_Disease'), 
+      order.by = "freq",
+      text.scale = c(1.5, 1.5, 1.3, 1.3, 1.3, 1.3))
+
+```
+
+
+## Data saving
+
+```{r, eval = FALSE}
+save(metadata, mets_selected, retro.family.table, te_annot, gene_annot,response_samples, raw_gene, raw_herv, hugo_metadata, hugo_gene, hugo_herv, make_sum, DESeq.gene.h.t, DESeq.gene.r.t, DESeq.herv.h.t, DESeq.herv.r.t, DESeq.corrected.gene.r.pca, DESeq.corrected.herv.r.pca, DESeq.corrected.herv.h.pca, DESeq.corrected.herv.h.pca,pr.herv.h,cr.herv.h,pd.herv.h, pd.h.gene,pr.h.gene,cr.h.gene, res_herv_hn.all, res_gene_h.all, sum_te_table, abundance_sum, plot_contrast , cluster_col_g,cluster_col_h, feature_col, herv_sort_cols,org_col, respond_col, file = "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/4.SKCM Responders v. Non-responders.RData")
+```
+
 

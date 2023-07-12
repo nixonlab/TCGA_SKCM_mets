@@ -82,7 +82,6 @@ generate_gene_table <- function(directory, name_order = gsub(paste(directory,"\\
 
 #### Extract Gene Data
 ```{r}
-#mskcc: validation data
 gene_direct <- "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/raw data TCGA SKCM/align_multi/"
 raw_gene <- generate_gene_table(gene_direct)
 ```
@@ -112,7 +111,7 @@ raw_herv <- raw_herv[which(rownames(raw_herv) != "__no_feature"),]
 #Annotation data from Telescope GitHub (https://raw.githubusercontent.com/LIniguez/Telescope_MetaAnnotations/main/TE_annotation.v2.0.tsv)
 te_annot <- read.delim("/Users/phoebefei/Desktop/WCM/Bulk Mets UM Prj/Results/TE_annotation.v2.0.tsv", row.names = 1)
 herv.names <- subset(te_annot, Class == "HERV") %>% rownames(.)
-raw_herv <- raw_herv %>% filter(row.names(.) %in% herv.names) %>% na.omit(.)
+raw_herv <- raw_herv[which(rownames(raw_herv) %in% herv.names),]
 ```
 
 ## Metadata
@@ -453,15 +452,27 @@ metadata[,colnames(response_meta)] <- response_meta
 ```
 
 Filtering
+                                                   
+### 1. Convert "-" to "Not Applicable" 
+```{r}
+metadata <- metadata  %>%
+   mutate(across(where(is.character), ~na_if(., "-")))
+metadata$RNASEQ.CLUSTER_CONSENHIER[which(is.na(metadata$RNASEQ.CLUSTER_CONSENHIER))] <- "Not Applicable"
+metadata$MethTypes.201408[which(is.na(metadata$MethTypes.201408))] <- "Not Applicable"
+metadata$MIRCluster[which(is.na(metadata$MIRCluster))] <- "Not Applicable"
+metadata$ProteinCluster[which(is.na(metadata$ProteinCluster))] <- "Not Applicable"
+metadata$OncoSignCluster[which(is.na(metadata$OncoSignCluster))] <- "Not Applicable"
+metadata$MUTATIONSUBTYPES[which(is.na(metadata$MUTATIONSUBTYPES))] <- "Not Applicable"
+```
 
-### 1. Selected samples with complete metadata for unsupervised clustering                                                        
 
+### 2. Selected samples with complete metadata for unsupervised clustering     
 ```{r}
 mets_selected <- subset(metadata, UV.signature != "Unknown" & Stage != "Unknown" & GENDER != "Unknown" & `CURATED_MELANOMA_SPECIFIC_VITAL_STATUS..0....ALIVE.OR.CENSORED...1....DEAD.OF.MELANOMA..` != "Unknown" & CURATED_TCGA_DAYS_TO_DEATH_OR_LAST_FU != "Unknown" & MUTATIONSUBTYPES != "Unknown")
 print(paste0("current sample number: ", nrow(mets_selected)))
 ```
 
-### 2. Metadata for responder vs. non-responder
+### 3. Metadata for responder vs. non-responder
 
 ```{r}
 response_samples <- subset(metadata, Immunotherapy == "YES" & treatment_best_response %in% c ("Stable Disease", "Partial Response","Clinical Progressive Disease","Complete Response"))
@@ -499,6 +510,13 @@ hugo_herv <- hugo_herv[which(rownames(hugo_herv) != "__no_feature"),]
 ```{r}
 hugo_herv <- hugo_herv %>% filter(row.names(.) %in% herv.names) %>% na.omit(.)
 ```
+
+```{r}
+#take out low counts rows
+hugo_gene <- hugo_gene[rowSums(hugo_gene) > cutoff.count,]
+hugo_herv <- hugo_herv[rowSums(hugo_herv) > cutoff.count,]
+```
+
 
 ## Metadata
 
@@ -561,9 +579,56 @@ make_sum <- function(meta_table, var_name, additional_cat = "None", print_status
 
 ```
 
+## Colors
+
+Color scales
+```{r}
+# Save as variable to global environment
+col_blind_p <- ColorBlind_Pal()
+glas32 <- DiscretePalette_scCustomize(num_colors = 32, palette = "glasbey")
+polyc<- DiscretePalette_scCustomize(num_colors = 36, palette = "polychrome", shuffle_pal = FALSE)
+varibow <- DiscretePalette_scCustomize(num_colors = 50, palette = "varibow")
+dark2 <- Dark2_Pal()
+alpha <- DiscretePalette_scCustomize(num_colors = 26, palette = "alphabet")
+```
+
+```{r}
+cluster_col_g <- c()
+cluster_col_h <- c()
+cluster_factors_hervs <- c("HERV_Cluster1","HERV_Cluster2","HERV_Cluster3","HERV_Cluster4","HERV_Cluster5","Metastatic","Primary")
+cluster_factors_genes <- c("Gene_Cluster1","Gene_Cluster2","Gene_Cluster3","Gene_Cluster4","Gene_Cluster5","Metastatic","Primary")
+for(i in 1:length(cluster_factors_hervs)){
+  cluster_col_g[unique(cluster_factors_genes)[i]] <- col_blind_p[i]
+  cluster_col_h[unique(cluster_factors_hervs)[i]] <- col_blind_p[i]
+}
+cluster_col_h[c("HERV_Cluster1", "HERV_Cluster2" ,"HERV_Cluster3", "HERV_Cluster4", "HERV_Cluster5")] <- glas32[15:20]
+feature_col <- c()
+feature_selections <- c("BORUTA and LRT", "BORUTA and LASSO",   "LASSO and LRT" , "All Consensus","LASSO Unique" ,  "BORUTA Unique" ,"LRT Unique")
+for(i in 1:length(unique(feature_selections))){
+  feature_col[unique(feature_selections)[i]] <- polyc[i]
+}
+herv_sort_names <- c(unique(te_annot$Group),unique(te_annot$Category),unique(te_annot$TE_type),unique(te_annot$Chrom))
+mix_cols <- c(polyc[8:length(unique(te_annot$Group))+8],glas32[1:length(unique(te_annot$Category))],col_blind_p[1:length(unique(te_annot$TE_type))],varibow[1:length(unique(te_annot$Chrom))])
+herv_sort_cols <- c()
+for(i in 1:length(herv_sort_names)){
+  herv_sort_cols[herv_sort_names[i]] <- mix_cols[i]
+}
+org_mix <- c(glas32[21:32], polyc[28:36], dark2, alpha)
+org_col <- c()
+org_clusters <- c(unique(metadata$RNASEQ.CLUSTER_CONSENHIER),unique(metadata$MethTypes.201408), unique(metadata$MIRCluster), unique(metadata$ProteinCluster),unique(metadata$OncoSignCluster),unique(metadata$MUTATIONSUBTYPES), "UV signature","not UV")
+for(i in 1:length(org_clusters)){
+  org_col[org_clusters[i]] <- org_mix[i]
+}
+respond_col <- c()
+respond_fact <- c("CR","PD","PR","SD","UCLA","VIC","TCGA","Y","N")
+for(i in 1:length(respond_fact)){
+  respond_col[respond_fact[i]] <- org_mix[4+i]
+}
+```
+
 
 # Data Saving
 ```{r, eval = FALSE}
-save(metadata, mets_selected, te_annot, gene_annot,response_samples, raw_gene, raw_herv, hugo_metadata, hugo_gene, hugo_herv, make_sum, retro.family.table,file = "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/1.count_data.RData")
+save(metadata, mets_selected, te_annot, gene_annot,response_samples, raw_gene, raw_herv, hugo_metadata, hugo_gene, hugo_herv, make_sum, retro.family.table,cluster_col_g,cluster_col_h, feature_col, herv_sort_cols,org_col, respond_col, file = "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/1.count_data.RData")
 ```
 

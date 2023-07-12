@@ -122,31 +122,54 @@ heattable <- function(deseq, res_table, select_string = "^(ERV|HERV|LTR|MER|HML)
 ```
 
 
-Color scales
-```{r}
-# Save as variable to global environment
-col_blind_p <- ColorBlind_Pal()
-glas32 <- DiscretePalette_scCustomize(num_colors = 32, palette = "glasbey")
-polyc<- DiscretePalette_scCustomize(num_colors = 36, palette = "polychrome", shuffle_pal = TRUE)
-varibow <- DiscretePalette_scCustomize(num_colors = 50, palette = "varibow")
-cluster_col <- c()
-cluster_factors <- c("C1","C2","C3","C4","C5","Metastatic","Primary")
-for(i in 1:length(cluster_factors)){
-  cluster_col[unique(cluster_factors)[i]] <- col_blind_p[i]
-}
-feature_col <- c()
-feature_selections <- c("BORUTA and LRT", "BORUTA and LASSO",   "LASSO and LRT" , "All Consensus","LASSO Unique" ,  "BORUTA Unique" ,"LRT Unique")
-for(i in 1:length(unique(feature_selections))){
-  feature_col[unique(feature_selections)[i]] <- polyc[i]
-}
-```
-
 # Load Data
 
 ```{r}
 load("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/1.count_data.RData")
 
 ```
+
+
+```{r}
+#download Luis' table
+te_annot$Group <- retro.family.table[te_annot$Family, "group"]
+```
+
+
+Color scales
+```{r}
+# Save as variable to global environment
+col_blind_p <- ColorBlind_Pal()
+glas32 <- DiscretePalette_scCustomize(num_colors = 32, palette = "glasbey")
+polyc<- DiscretePalette_scCustomize(num_colors = 36, palette = "polychrome", shuffle_pal = FALSE)
+varibow <- DiscretePalette_scCustomize(num_colors = 50, palette = "varibow")
+cluster_col_g <- c()
+cluster_col_h <- c()
+cluster_factors_hervs <- c("HERV_Cluster1","HERV_Cluster2","HERV_Cluster3","HERV_Cluster4","HERV_Cluster5","Metastatic","Primary")
+cluster_factors_genes <- c("Gene_Cluster1","Gene_Cluster2","Gene_Cluster3","Gene_Cluster4","Gene_Cluster5","Metastatic","Primary")
+for(i in 1:length(cluster_factors_hervs)){
+  cluster_col_g[unique(cluster_factors_genes)[i]] <- col_blind_p[i]
+  cluster_col_h[unique(cluster_factors_hervs)[i]] <- col_blind_p[i]
+}
+cluster_col_h[c("HERV_Cluster1", "HERV_Cluster2" ,"HERV_Cluster3", "HERV_Cluster4", "HERV_Cluster5")] <- glas32[15:20]
+feature_col <- c()
+feature_selections <- c("BORUTA and LRT", "BORUTA and LASSO",   "LASSO and LRT" , "All Consensus","LASSO Unique" ,  "BORUTA Unique" ,"LRT Unique")
+for(i in 1:length(unique(feature_selections))){
+  feature_col[unique(feature_selections)[i]] <- polyc[i]
+}
+herv_sort_names <- c(unique(te_annot$Group),unique(te_annot$Category),unique(te_annot$TE_type),unique(te_annot$Chrom))
+mix_cols <- c(polyc[1:length(unique(te_annot$Group))],glas32[1:length(unique(te_annot$Category))],col_blind_p[1:length(unique(te_annot$TE_type))],varibow[1:length(unique(te_annot$Chrom))])
+herv_sort_cols <- c()
+for(i in 1:length(herv_sort_names)){
+  herv_sort_cols[herv_sort_names[i]] <- mix_cols[i]
+}
+org_col <- c()
+org_clusters <- c(unique(metadata$RNASEQ.CLUSTER_CONSENHIER),unique(metadata$MethTypes.201408), unique(metadata$MIRCluster), unique(metadata$ProteinCluster),unique(metadata$OncoSignCluster),unique(metadata$MUTATIONSUBTYPES), "UV signature","not UV")
+for(i in 1:length(org_clusters)){
+  org_col[org_clusters[i]] <- glas32[i]
+}
+```
+
 
 # Goal: 
 
@@ -162,7 +185,6 @@ make_sum(meta_table = metadata, var_name = "Specimen_Site", additional_cat = "No
 make_sum(meta_table = metadata, var_name = "Biopsy_Site", additional_cat = "None")
 make_sum(meta_table = metadata, var_name = "CURATED_MELANOMA_SPECIFIC_VITAL_STATUS..0....ALIVE.OR.CENSORED...1....DEAD.OF.MELANOMA..")
 ```
-
 
 ## Genes
 
@@ -217,11 +239,12 @@ biplot(DESeq.gene.un.pca.5, lab = NULL, colby = "Status", legendPosition = 'righ
 There is really no much change on the PC scale, keep with 30%
 
 ```{r, fig.height = 8, fig.width = 10}
+biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "Status", legendPosition = 'right') + ggtitle("TCGA-SKCM PCA (top 70% var), Gene Expression\nColor by Status") + scale_color_manual(values = cluster_col_g[c("Metastatic","Primary")])
 biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "Specimen_Site", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Sample Site")
 biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "Biopsy_Site", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Biopsy Site")
 biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "GENDER", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Gender")
 biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "MUTATIONSUBTYPES", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Mutation Subtypes")
-biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "UV.signature", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by UV Signature")
+biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "UV.signature", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by UV Signature")+ scale_color_manual(values = org_col[unique(metadata$UV.signature)])
 biplot(DESeq.gene.un.pca.3, lab = NULL, colby = "Stage", legendPosition = 'right') + ggtitle("PCA, Genes Expression\nColor by Tumor Stage")
 ```
 
@@ -392,8 +415,7 @@ Heatmap
 ```{r,fig.height = 18, fig.width = 15}
 breaklist <- seq(-3, 3, by = 0.25)
 feature_col_genes <- feature_col[unique(res_gene_pm_selected$Feature_Select)]
-status_col <- cluster_col[c("Primary","Metastatic")]
-pheatmap(gene_heat_pm, scale="row",main = "Feature Selected DE Genes, by Status",fontsize = 20, size = 35, color = inferno(25), show_rownames = FALSE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = metadata[,c("Status"), drop = FALSE],annotation_row = res_gene_pm_selected[,"Feature_Select",drop = FALSE],gaps_col = 65, annotation_colors = list(Status = status_col, Feature_Select = feature_col_genes))
+pheatmap(gene_heat_pm, scale="row",main = "Feature Selected DE Genes, by Status",fontsize = 20, size = 35, color = inferno(25), show_rownames = FALSE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = metadata[,c("Status"), drop = FALSE],annotation_row = res_gene_pm_selected[,"Feature_Select",drop = FALSE],gaps_col = 65, annotation_colors = list(Status = cluster_col_g[c("Primary","Metastatic")], Feature_Select = feature_col_genes))
 ```
 
 
@@ -401,7 +423,7 @@ pheatmap(gene_heat_pm, scale="row",main = "Feature Selected DE Genes, by Status"
 breaklist <- seq(-3, 3, by = 0.25)
 gene_pm_heat_sub <- gene_heat_pm[all_3_gene,]
 rownames(gene_pm_heat_sub) <- gene_annot[rownames(gene_pm_heat_sub), "gene_name"]
-pheatmap(gene_pm_heat_sub, scale="row",main = "Feature Selected DE Genes, by Status\nShowing Selected Genes by All Methods",fontsize = 20, size = 35, color = inferno(25), show_rownames = TRUE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = metadata[,c("Status"), drop = FALSE],gaps_col = 65, annotation_colors = list(Status = status_col))
+pheatmap(gene_pm_heat_sub, scale="row",main = "Feature Selected DE Genes, by Status\nShowing Selected Genes by All Methods",fontsize = 20, size = 35, color = inferno(25), show_rownames = TRUE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = metadata[,c("Status"), drop = FALSE],gaps_col = 65, annotation_colors = list(Status = cluster_col_h[c("Primary","Metastatic")]))
 ```
 
 Volcano Plot
@@ -417,8 +439,7 @@ EnhancedVolcano(res_gene_pm.all,lab = res_gene_pm.all$Selected_gene , x = 'log2F
 
 ## HERVs
 
-
-### PCA to see if there are obvious metadata variables that contribute to PC1 or PC2
+### Create the DESeq Object
 
 ```{r}
 #create the object
@@ -446,6 +467,75 @@ msd.herv <- vsn::meanSdPlot(DESeq.herv.un@assays@data@listData$log.norm.counts, 
 msd.herv$gg + ggtitle("Sequencing depth normalized log2(read counts), HERVs") + ylab("standard deviation")
 ```
 
+
+
+### Pre-DESeq: Create an abundance stack plot for the primary vs. metastatic HERV abundance
+
+#### Annotate the HERV loci
+
+Write a function to output a plottable abundance summary for 1 category
+```{r}
+#count_mat: the count matrix; meta = metadata; annotation = TE or gene annotation, the summary category table to build stack plot from; category = the category from annotation table to summarize from; cont = the contrast group from matadata
+abundance_sum <- function(count_mat,meta, annotation, category, cont = "Status"){
+  sum_table <- data.frame(matrix(ncol = 5))
+  colnames(sum_table) <- c(cont, category, "Count","PCT","AvgCount")
+  e.te.annot <- annotation[rownames(count_mat),,drop = FALSE]
+  e.te.annot$ids <- rownames(e.te.annot)
+  meta$ids <- rownames(meta)
+  for(trait in unique(meta[,cont])){
+    sample_sub <- meta[which(meta[,cont] == trait),"ids"]
+    for(sub_cat in unique(e.te.annot[,category])){
+      sub_cat_rows <- e.te.annot[which(e.te.annot[,category] == sub_cat),"ids"]
+      count_mat_sub_rows <- count_mat[sub_cat_rows,sample_sub]
+      #print(count_mat_sub_rows)
+      sum_table[nrow(sum_table) + 1,c(1:3,5)] <- c(trait, sub_cat, sum(count_mat_sub_rows), round(sum(count_mat_sub_rows)/ncol(count_mat_sub_rows),2))
+    }
+    sum_table$Count <- as.numeric(sum_table$Count)
+    sum_table$AvgCount <- as.numeric(sum_table$AvgCount)
+    stat_row_sum <- sum(sum_table[which(sum_table[,cont] == trait),"Count"])
+    sum_table[which(sum_table[,cont] == trait),4] <- round(((sum_table[which(sum_table[,cont] == trait), "Count"])/stat_row_sum)*100,2)
+  }
+  sum_table <- sum_table[-1,]
+  return(sum_table)
+}
+
+```
+
+
+
+```{r}
+herv_family <- abundance_sum(count_mat = raw_herv,meta = metadata, annotation = te_annot, category = "Group", cont = "Status")
+herv_cate <- abundance_sum(count_mat = raw_herv,meta = metadata, annotation = te_annot, category = "Category", cont = "Status")
+herv_chrom <- abundance_sum(count_mat = raw_herv,meta = metadata, annotation = te_annot, category = "Chrom", cont = "Status")
+herv_type <- abundance_sum(count_mat = raw_herv,meta = metadata, annotation = te_annot, category = "TE_type", cont = "Status")
+```
+
+
+```{r, fig.height = 10, fig.width = 20}
+group_pm_pct <- ggplot(herv_family, aes(x = factor(Status, levels = c("Primary", "Metastatic")), y = PCT, fill = reorder(Group, -PCT))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = herv_sort_cols[unique(herv_family$Group)])+ xlab("Status") +ylab("Percentage") + guides(fill = guide_legend(title = "HERV Family Group"))+theme(axis.title=element_text(size=20,face="bold"),legend.title = element_text(size = 20,face="bold"),axis.text = element_text(size = 20),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1), legend.text = element_text(size=18))
+
+cat_pm_pct <- ggplot(herv_cate, aes(x = factor(Status, levels = c("Primary", "Metastatic")), y = PCT, fill = reorder(Category, -PCT))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = herv_sort_cols[unique(herv_cate$Category)])+ xlab("Status") +ylab("Percentage") + guides(fill = guide_legend(title = "HERV Category"))+theme(axis.title=element_text(size=20,face="bold"),legend.title = element_text(size = 20,face="bold"),axis.text = element_text(size = 20),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1), legend.text = element_text(size=18))
+
+chrom_pm_pct <- ggplot(herv_chrom, aes(x =  factor(Status, levels = c("Primary", "Metastatic")), y = PCT, fill = reorder(Chrom, -PCT))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = herv_sort_cols[unique(herv_chrom$Chrom)])+ xlab("Status")+ ylab("Percentage") + guides(fill = guide_legend(title = "HERV Chromosome Position"))+theme(axis.title=element_text(size=20,face="bold"),legend.title = element_text(size = 20,face="bold"),axis.text = element_text(size = 20),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1), legend.text = element_text(size=18))
+
+type_pm_pct <- ggplot(herv_type, aes(x =  factor(Status, levels = c("Primary", "Metastatic")), y = PCT, fill = reorder(TE_type, -PCT))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = herv_sort_cols[unique(herv_type$TE_type)])+ xlab("Status")+ ylab("Percentage") + guides(fill = guide_legend(title = "HERV Type"))+theme(axis.title=element_text(size=20,face="bold"),legend.title = element_text(size = 20,face="bold"),axis.text = element_text(size = 20),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1), legend.text = element_text(size=18))
+
+group_pm_pct + cat_pm_pct+chrom_pm_pct+type_pm_pct+plot_layout(ncol = 4)
+```
+
+
+
+```{r, fig.height = 10, fig.width = 20}
+group_pm_count <- ggplot(herv_family, aes(x = factor(Status, levels = c("Primary", "Metastatic")), y = AvgCount, fill = reorder(Group, -AvgCount))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = herv_sort_cols[unique(herv_family$Group)])+ xlab("Status")+ ylab("Average Count Per Sample") + guides(fill = guide_legend(title = "HERV Family Group"))+theme(axis.title=element_text(size=20,face="bold"),legend.title = element_text(size = 20,face="bold"),axis.text = element_text(size = 20),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1), legend.text = element_text(size=18))
+cat_pm_count <- ggplot(herv_cate, aes(x = factor(Status, levels = c("Primary", "Metastatic")), y = AvgCount, fill = reorder(Category, -AvgCount))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = herv_sort_cols[unique(herv_cate$Category)])+ xlab("Status")+ ylab("Average Count Per Sample") + guides(fill = guide_legend(title = "HERV Category"))+theme(axis.title=element_text(size=20,face="bold"),legend.title = element_text(size = 20,face="bold"),axis.text = element_text(size = 20),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1), legend.text = element_text(size=18))
+chrom_pm_count <- ggplot(herv_chrom, aes(x =  factor(Status, levels = c("Primary", "Metastatic")), y = AvgCount, fill = reorder(Chrom, -AvgCount))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = herv_sort_cols[unique(herv_chrom$Chrom)])+ xlab("Status")+ ylab("Average Count Per Sample") + guides(fill = guide_legend(title = "HERV Chromosome Position"))+theme(axis.title=element_text(size=20,face="bold"),legend.title = element_text(size = 20,face="bold"),axis.text = element_text(size = 20),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1), legend.text = element_text(size=18))
+type_pm_count <- ggplot(herv_type, aes(x =  factor(Status, levels = c("Primary", "Metastatic")), y = AvgCount, fill = reorder(TE_type, -AvgCount))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = herv_sort_cols[unique(herv_type$TE_type)])+ xlab("Status")+ ylab("Average Count Per Sample") + guides(fill = guide_legend(title = "HERV Type"))+theme(axis.title=element_text(size=20,face="bold"),legend.title = element_text(size = 20,face="bold"),axis.text = element_text(size = 20),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1), legend.text = element_text(size=18))
+group_pm_count + cat_pm_count+chrom_pm_count+type_pm_count+plot_layout(ncol = 4)
+```
+
+
+### PCA to see if there are obvious metadata variables that contribute to PC1 or PC2
+
 ```{r}
 #try removeVar = 0.1 - 0.5
 DESeq.herv.un.pca.1 <- pca(DESeq.herv.un.vst, metadata = colData(DESeq.herv.un), removeVar = 0.1)
@@ -470,11 +560,12 @@ Seems to have better separation when removing bottom 20% variance, otherwise no 
 
 
 ```{r, fig.height = 8, fig.width = 10}
+biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "Status", legendPosition = 'right') + ggtitle("PTCGA-SKCM PCA (top 80% var), HERV Expression\nColor by Status")  + scale_color_manual(values = cluster_col_g[c("Metastatic","Primary")])
 biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "Specimen_Site", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Sample Site")
 biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "Biopsy_Site", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Biopsy Site")
 biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "GENDER", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Gender")
 biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "MUTATIONSUBTYPES", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Mutation Subtypes")
-biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "UV.signature", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by UV Signature")
+biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "UV.signature", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by UV Signature") + scale_color_manual(values = org_col[unique(metadata$UV.signature)])
 biplot(DESeq.herv.un.pca.2, lab = NULL, colby = "Stage", legendPosition = 'right') + ggtitle("PCA, HERVs Expression\nColor by Tumor Stage")
 ```
 
@@ -612,13 +703,13 @@ Heatmap
 ```{r,fig.height = 12, fig.width = 15}
 breaklist <- seq(-3, 3, by = 0.25)
 feature_col_herv <- feature_col[unique(res_herv_pm_selected$Feature_Select)]
-pheatmap(herv_heat_pm, scale="row",main = "Feature Selected DE HERVs, by Status",fontsize = 20, size = 35, color = inferno(25), show_rownames = FALSE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = metadata[,c("Status"), drop = FALSE],annotation_row = res_herv_pm_selected[,"Feature_Select",drop = FALSE], gaps_col = 65,annotation_colors = list(Status = status_col, Feature_Select = feature_col_herv))
+pheatmap(herv_heat_pm, scale="row",main = "Feature Selected DE HERVs, by Status",fontsize = 20, size = 35, color = inferno(25), show_rownames = FALSE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = metadata[,c("Status"), drop = FALSE],annotation_row = res_herv_pm_selected[,"Feature_Select",drop = FALSE], gaps_col = 65,annotation_colors = list(Status = cluster_col_h[c("Primary","Metastatic")], Feature_Select = feature_col_herv))
 ```
 
 ```{r,fig.height = 4, fig.width = 16}
 breaklist <- seq(-3, 3, by = 0.25)
 herv_pm_heat_sub <- herv_heat_pm[all_3_herv,]
-pheatmap(herv_pm_heat_sub, scale="row",main = "Feature Selected DE HERVs, by Status",fontsize = 20, size = 35, color = inferno(25), show_rownames = TRUE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = metadata[,c("Status"), drop = FALSE],gaps_col = 65, annotation_colors = list(Status = status_col))
+pheatmap(herv_pm_heat_sub, scale="row",main = "Feature Selected DE HERVs, by Status",fontsize = 20, size = 35, color = inferno(25), show_rownames = TRUE, show_colnames = FALSE,cluster_cols = FALSE, cluster_rows = TRUE, breaks = breaklist, legend_labels = "Expression Z-score", annotation_col = metadata[,c("Status"), drop = FALSE],gaps_col = 65, annotation_colors = list(Status = cluster_col_h[c("Primary","Metastatic")]))
 ```
 
 Volcano Plot
@@ -629,13 +720,15 @@ res_herv_pm.all[all_3_herv,"Selected_gene"] <- all_3_herv
 EnhancedVolcano(res_herv_pm.all,lab = res_herv_pm.all$Selected_gene , x = 'log2FoldChange', y = 'padj', pCutoff = 0.01,FCcutoff = 2,title = "HERV Vocalno, Primary vs. Metastatic\nShowing HERVs Selected by all 3 Methods",labSize = 10, labCol = "blue4", captionLabSize = 40, axisLabSize = 40, legendLabSize = 40, max.overlaps = Inf, drawConnectors = TRUE,arrowheads = FALSE,colAlpha = 1/2,col = c("black", "forestgreen", "orange", "red1"),pointSize = 4)+theme( plot.title=element_text(size=45,face="bold"),axis.title=element_text(size=45,face="bold"))
 ```
 
-### Annotate the HERV loci
+
+
+
+### Count Plotting
 
 ```{r}
-#download Luis' table
 feature_selected_hervs_pm <- te_annot[rownames(herv_heat_pm),]
-feature_selected_hervs_pm$Group <- retro.family.table[feature_selected_hervs_pm$Family, "group"]
 ```
+
 
 #### Construct a summary table
 
@@ -653,41 +746,46 @@ for(items in c("Group","Category","Chrom","TE_type")){
 ```
 
 
-```{r, fig.height = 5, fig.width =10}
-group_col <- ggplot(graph.list$Group, aes(x = Class, y = Count, fill = reorder(Group, -Count))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = polyc)+ xlab(NULL) + guides(fill = guide_legend(title = "HERV Family Group"))
-cat_col <- ggplot(graph.list$Category, aes(x = Class, y = Count, fill = reorder(Category, -Count))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = col_blind_p)+ xlab(NULL) + guides(fill = guide_legend(title = "HERV Category"))
-chrom_col <- ggplot(graph.list$Chrom, aes(x = Class, y = Count, fill = reorder(Chrom, -Count))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = varibow)+ xlab(NULL) + guides(fill = guide_legend(title = "HERV Chromosome Position"))
-type_col <- ggplot(graph.list$TE_type, aes(x = Class, y = Count, fill = reorder(TE_type, -Count))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = glas32)+ xlab(NULL) + guides(fill = guide_legend(title = "HERV Type"))
+```{r, fig.height = 10, fig.width = 17}
+group_col <- ggplot(graph.list$Group, aes(x = Class, y = Count, fill = reorder(Group, -Count))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = herv_sort_cols[unique(graph.list$Group$Group)])+ xlab(NULL)+ylab("Number of DE HERV Loci") + guides(fill = guide_legend(title = "HERV Family Group"))+theme(axis.title=element_text(size=20,face="bold"),legend.title = element_text(size = 20,face="bold"),axis.text = element_text(size = 20),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1), legend.text = element_text(size=18))
+
+
+cat_col <- ggplot(graph.list$Category, aes(x = Class, y = Count, fill = reorder(Category, -Count))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = herv_sort_cols[unique(graph.list$Category$Category)])+ xlab(NULL)+ylab("Number of DE HERV Loci") + guides(fill = guide_legend(title = "HERV Category"))+theme(axis.title=element_text(size=20,face="bold"),legend.title = element_text(size = 20,face="bold"),axis.text = element_text(size = 20),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1), legend.text = element_text(size=18))
+
+
+chrom_col <- ggplot(graph.list$Chrom, aes(x = Class, y = Count, fill = reorder(Chrom, -Count))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = herv_sort_cols[unique(graph.list$Chrom$Chrom)])+ xlab(NULL)+ylab("Number of DE HERV Loci") + guides(fill = guide_legend(title = "HERV Chromosome Position"))+theme(axis.title=element_text(size=20,face="bold"),legend.title = element_text(size = 20,face="bold"),axis.text = element_text(size = 20),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1), legend.text = element_text(size=18))
+
+
+type_col <- ggplot(graph.list$TE_type, aes(x = Class, y = Count, fill = reorder(TE_type, -Count))) + geom_bar(stat = "identity", color = "black") +  scale_fill_manual(values = herv_sort_cols[unique(graph.list$TE_type$TE_type)])+ xlab(NULL)+ylab("Number of DE HERV Loci") + guides(fill = guide_legend(title = "HERV Type"))+theme(axis.title=element_text(size=20,face="bold"),legend.title = element_text(size = 20,face="bold"),axis.text = element_text(size = 20),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1), legend.text = element_text(size=18))
+
 
 group_col + cat_col+chrom_col+type_col+plot_layout(ncol = 4)
 ```
-
-### Count Plotting
 
 
 ```{r, fig.height = 5, fig.width = 3}
 plot_contrast <- function(count_table, metadata,category, herv, title = "Selected Counts"){
   count_hervs <- cbind(t(count_table[herv,rownames(metadata), drop = FALSE]), metadata[, category,drop = FALSE])
   colnames(count_hervs) <- c("HERV","Category")
-  herv_plot <- ggplot(count_hervs,aes(x = Category, y = HERV, color = Category)) + geom_boxplot(outlier.shape = NA)+ geom_jitter(size = 1, shape=16, position=position_jitter(0.2))+ stat_summary(fun.y=mean, geom="point", shape=19, size=3, color = "red")+scale_color_manual(values = c("#E69F00", "#56B4E9"))+xlab(NULL)+ ylab(" Normalized Counts")+ggtitle(title)+theme(plot.title = element_text(size = 15, face = "bold"),axis.title=element_text(size=15,face="bold"),legend.title = element_text(size = 15,face="bold"),axis.text = element_text(size = 15),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1))
+  herv_plot <- ggplot(count_hervs,aes(x = Category, y = HERV, color = Category)) + geom_boxplot(outlier.shape = NA)+ geom_jitter(size = 1, shape=16, position=position_jitter(0.2))+ stat_summary(fun.y=mean, geom="point", shape=19, size=3, color = "red")+scale_color_manual(values = cluster_col_h[c("Primary","Metastatic")])+xlab(NULL)+ ylab(" Normalized Counts")+ggtitle(title)+theme(plot.title = element_text(size = 15, face = "bold"),axis.title=element_text(size=15,face="bold"),legend.title = element_text(size = 15,face="bold"),axis.text = element_text(size = 15),axis.text.x = element_text(angle = 60, vjust = 1, hjust=1))
   return(print(herv_plot))}
 
-HERVH_13q33.3_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "HERVH_13q33.3", title = "HERVH_13q33.3")
-MER4B_19q13.42a_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "MER4B_19q13.42a", title = "MER4B_19q13.42a")
-HERV4_13q32.3_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "HERV4_13q32.3", title = "HERV4_13q32.3")
-ERVLB4_8p21.3b_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "ERVLB4_8p21.3b", title = "ERVLB4_8p21.3b")
-HERVI_7q33c_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "HERVI_7q33c", title = "HERVI_7q33c")
-HERVL18_6q14.1_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "HERVL18_6q14.1", title = "HERVL18_6q14.1")
-MER61_12p13.31b_pm <- plot_contrast(DESeq.herv.filt_norm, metadata = metadata, category = "Status", herv = "MER61_12p13.31b", title = "MER61_12p13.31b")
+HERVH_13q33.3_pm <- plot_contrast(DESeq.herv.un_norm, metadata = metadata, category = "Status", herv = "HERVH_13q33.3", title = "HERVH_13q33.3")
+MER4B_19q13.42a_pm <- plot_contrast(DESeq.herv.un_norm, metadata = metadata, category = "Status", herv = "MER4B_19q13.42a", title = "MER4B_19q13.42a")
+HERV4_13q32.3_pm <- plot_contrast(DESeq.herv.un_norm, metadata = metadata, category = "Status", herv = "HERV4_13q32.3", title = "HERV4_13q32.3")
+ERVLB4_8p21.3b_pm <- plot_contrast(DESeq.herv.un_norm, metadata = metadata, category = "Status", herv = "ERVLB4_8p21.3b", title = "ERVLB4_8p21.3b")
+HERVI_7q33c_pm <- plot_contrast(DESeq.herv.un_norm, metadata = metadata, category = "Status", herv = "HERVI_7q33c", title = "HERVI_7q33c")
+HERVL18_6q14.1_pm <- plot_contrast(DESeq.herv.un_norm, metadata = metadata, category = "Status", herv = "HERVL18_6q14.1", title = "HERVL18_6q14.1")
+MER61_12p13.31b_pm <- plot_contrast(DESeq.herv.un_norm, metadata = metadata, category = "Status", herv = "MER61_12p13.31b", title = "MER61_12p13.31b")
 ```
 
 
 ```{r, fig.height = 10, fig.width = 12}
-
 HERVH_13q33.3_pm+MER4B_19q13.42a_pm+HERV4_13q32.3_pm+ERVLB4_8p21.3b_pm+HERVI_7q33c_pm+HERVL18_6q14.1_pm+MER61_12p13.31b_pm+plot_layout(ncol = 4, nrow = 2)
 ```
 
 # Data Saving
 ```{r, eval = FALSE}
-save(metadata, mets_selected, retro.family.table, te_annot, gene_annot,response_samples, raw_gene, raw_herv, hugo_metadata, hugo_gene, hugo_herv, make_sum, DESeq.gene.un.pca.3, DESeq.herv.un.pca.2, res_herv_pm.all, res_gene_pm.all, gene_heat_pm, herv_heat_pm, selected_genes_pm, selected_herv_pm, file = "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/2.Primary vs. Metastatic TCGA-SKCM.RData")
+save(metadata, mets_selected, retro.family.table, te_annot, gene_annot,response_samples, raw_gene, raw_herv, hugo_metadata, hugo_gene, hugo_herv, make_sum, DESeq.gene.un.pca.3, DESeq.herv.un.pca.2, res_herv_pm.all, res_gene_pm.all, gene_heat_pm, herv_heat_pm, selected_genes_pm, selected_herv_pm, sum_te_table, abundance_sum, plot_contrast , cluster_col_g,cluster_col_h, feature_col, herv_sort_cols,org_col, respond_col, file = "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/2.Primary vs. Metastatic TCGA-SKCM.RData")
+#load("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/2.Primary vs. Metastatic TCGA-SKCM.RData")
 ```

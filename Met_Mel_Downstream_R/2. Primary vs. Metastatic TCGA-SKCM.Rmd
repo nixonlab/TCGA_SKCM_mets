@@ -130,47 +130,6 @@ load("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/1.count_data.RD
 ```
 
 
-```{r}
-#download Luis' table
-te_annot$Group <- retro.family.table[te_annot$Family, "group"]
-```
-
-
-Color scales
-```{r}
-# Save as variable to global environment
-col_blind_p <- ColorBlind_Pal()
-glas32 <- DiscretePalette_scCustomize(num_colors = 32, palette = "glasbey")
-polyc<- DiscretePalette_scCustomize(num_colors = 36, palette = "polychrome", shuffle_pal = FALSE)
-varibow <- DiscretePalette_scCustomize(num_colors = 50, palette = "varibow")
-cluster_col_g <- c()
-cluster_col_h <- c()
-cluster_factors_hervs <- c("HERV_Cluster1","HERV_Cluster2","HERV_Cluster3","HERV_Cluster4","HERV_Cluster5","Metastatic","Primary")
-cluster_factors_genes <- c("Gene_Cluster1","Gene_Cluster2","Gene_Cluster3","Gene_Cluster4","Gene_Cluster5","Metastatic","Primary")
-for(i in 1:length(cluster_factors_hervs)){
-  cluster_col_g[unique(cluster_factors_genes)[i]] <- col_blind_p[i]
-  cluster_col_h[unique(cluster_factors_hervs)[i]] <- col_blind_p[i]
-}
-cluster_col_h[c("HERV_Cluster1", "HERV_Cluster2" ,"HERV_Cluster3", "HERV_Cluster4", "HERV_Cluster5")] <- glas32[15:20]
-feature_col <- c()
-feature_selections <- c("BORUTA and LRT", "BORUTA and LASSO",   "LASSO and LRT" , "All Consensus","LASSO Unique" ,  "BORUTA Unique" ,"LRT Unique")
-for(i in 1:length(unique(feature_selections))){
-  feature_col[unique(feature_selections)[i]] <- polyc[i]
-}
-herv_sort_names <- c(unique(te_annot$Group),unique(te_annot$Category),unique(te_annot$TE_type),unique(te_annot$Chrom))
-mix_cols <- c(polyc[1:length(unique(te_annot$Group))],glas32[1:length(unique(te_annot$Category))],col_blind_p[1:length(unique(te_annot$TE_type))],varibow[1:length(unique(te_annot$Chrom))])
-herv_sort_cols <- c()
-for(i in 1:length(herv_sort_names)){
-  herv_sort_cols[herv_sort_names[i]] <- mix_cols[i]
-}
-org_col <- c()
-org_clusters <- c(unique(metadata$RNASEQ.CLUSTER_CONSENHIER),unique(metadata$MethTypes.201408), unique(metadata$MIRCluster), unique(metadata$ProteinCluster),unique(metadata$OncoSignCluster),unique(metadata$MUTATIONSUBTYPES), "UV signature","not UV")
-for(i in 1:length(org_clusters)){
-  org_col[org_clusters[i]] <- glas32[i]
-}
-```
-
-
 # Goal: 
 
 The Hugo or Van Allen datasets do not contain any primary samples, compute the gene and HERV expression differences within the TCGA-SKCM dataset will help us determine if we will need to drop the primary samples. 
@@ -184,6 +143,7 @@ make_sum(meta_table = metadata, var_name = "GENDER", additional_cat = "None")
 make_sum(meta_table = metadata, var_name = "Specimen_Site", additional_cat = "None")
 make_sum(meta_table = metadata, var_name = "Biopsy_Site", additional_cat = "None")
 make_sum(meta_table = metadata, var_name = "CURATED_MELANOMA_SPECIFIC_VITAL_STATUS..0....ALIVE.OR.CENSORED...1....DEAD.OF.MELANOMA..")
+make_sum(meta_table = metadata, var_name = "Tumor.Mutation.Burden.Level")
 ```
 
 ## Genes
@@ -392,16 +352,16 @@ gene.pm.go.summary <- as.data.frame(gene.pm.go)
 
 Gene functional analyses
 
-```{r, fig.height=8, fig.width = 8}
-dotplot(gene.pm.go, showCategory = 15) + ggtitle("Enrichment Analysis\nSignificant DE Genes Metastatic vs. Primary")+theme( plot.title=element_text(size=10,face="bold"),axis.title=element_text(size=15))
+```{r, fig.height=8.5, fig.width = 8}
+dotplot(gene.pm.go, showCategory = 15) + ggtitle("Enrichment Analysis\nSignificant DE Genes Metastatic vs. Primary")+theme( plot.title=element_text(size=15,face="bold"),axis.title=element_text(size=15))
 
 ```
 
 
 
-```{r, fig.height= 12, fig.width = 12}
+```{r, fig.height= 15, fig.width = 15}
 gene_pm_pair <- enrichplot::pairwise_termsim(gene.pm.go)
-emapplot(gene_pm_pair, showCategory = 15, cex_label_category = 1, cex_category = 2, min_edge = 0.3) + ggtitle("Enrichment Map\nSignificant DE Genes Metastatic vs. Primary")+theme(plot.title=element_text(size=12,face="bold"),axis.title=element_text(size=30,face="bold"), legend.text = element_text(size = 15), legend.title = element_text(size = 20))
+emapplot(gene_pm_pair, showCategory = 15, cex.params = list(category_node = 1.5, category_label = 1.5) ,edge.params = list(min = 0.3)) + ggtitle("Enrichment Map\nSignificant DE Genes Metastatic vs. Primary")+theme(plot.title=element_text(size=15,face="bold"),axis.title=element_text(size=30,face="bold"), legend.text = element_text(size = 25), legend.title = element_text(size = 30)) + xlab("Fold Enrichment Values") + ylab("Enriched Terms")
 
 ```
 
@@ -764,6 +724,7 @@ group_col + cat_col+chrom_col+type_col+plot_layout(ncol = 4)
 
 
 ```{r, fig.height = 5, fig.width = 3}
+metadata$Status <- factor(metadata$Status, levels = c("Primary","Metastatic"))
 plot_contrast <- function(count_table, metadata,category, herv, title = "Selected Counts"){
   count_hervs <- cbind(t(count_table[herv,rownames(metadata), drop = FALSE]), metadata[, category,drop = FALSE])
   colnames(count_hervs) <- c("HERV","Category")
@@ -786,6 +747,6 @@ HERVH_13q33.3_pm+MER4B_19q13.42a_pm+HERV4_13q32.3_pm+ERVLB4_8p21.3b_pm+HERVI_7q3
 
 # Data Saving
 ```{r, eval = FALSE}
-save(metadata, mets_selected, retro.family.table, te_annot, gene_annot,response_samples, raw_gene, raw_herv, hugo_metadata, hugo_gene, hugo_herv, make_sum, DESeq.gene.un.pca.3, DESeq.herv.un.pca.2, res_herv_pm.all, res_gene_pm.all, gene_heat_pm, herv_heat_pm, selected_genes_pm, selected_herv_pm, sum_te_table, abundance_sum, plot_contrast , cluster_col_g,cluster_col_h, feature_col, herv_sort_cols,org_col, respond_col, file = "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/2.Primary vs. Metastatic TCGA-SKCM.RData")
+save(metadata, mets_selected, retro.family.table, te_annot, gene_annot,response_samples, raw_gene, raw_herv, hugo_metadata, hugo_gene, hugo_herv, make_sum, DESeq.gene.un.pca.3, DESeq.herv.un.pca.2, DESeq.herv.un_norm, DESeq.gene.un_norm,res_herv_pm.all, res_gene_pm.all, gene_heat_pm, herv_heat_pm, selected_genes_pm, selected_herv_pm, sum_te_table, abundance_sum, plot_contrast , cluster_col_g,cluster_col_h, feature_col, herv_sort_cols,org_col, respond_col, file = "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/2.Primary vs. Metastatic TCGA-SKCM.RData")
 #load("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/2.Primary vs. Metastatic TCGA-SKCM.RData")
 ```

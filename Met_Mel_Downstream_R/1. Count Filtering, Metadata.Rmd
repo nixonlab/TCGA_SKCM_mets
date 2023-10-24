@@ -41,7 +41,6 @@ library(dplyr)
 library(magrittr)
 library(scopetools)
 library(DESeq2)
-library(stringr)
 library(ggplot2)
 library(viridis)
 library(UpSetR)
@@ -49,6 +48,10 @@ library(edgeR)
 library(readxl)
 library(biomartr)
 library(rtracklayer)
+library(scCustomize)
+library(devtools)
+library(TCGAbiolinks)
+library(maftools)
 ```
 
 # TCGA-SKCM
@@ -125,6 +128,46 @@ metadata <- metadata[ ,!(colnames(metadata) %in% name_drop)]
 rownames(metadata) <- metadata$Sample.ID
 ```
 
+```{r, eval = FALSE}
+#Mutation burden data from TCGAbiolink
+skcm_query <- GDCquery(
+  project = "TCGA-SKCM", 
+  data.category = "Simple Nucleotide Variation", 
+  access = "open",
+  data.type = "Masked Somatic Mutation", 
+  workflow.type = "Aliquot Ensemble Somatic Variant Merging and Masking"
+)
+GDCdownload(skcm_query)
+skcm_mutation <- GDCprepare(skcm_query) %>% maftools::read.maf(.)
+```
+
+```{r}
+skcm_tmb <- tmb(skcm_mutation, captureSize = 50, logScale = TRUE) %>% as.data.frame(.)
+#matching the metadata rownames
+rownames(skcm_tmb) <- gsub("\\-[0-9]{2}[A-Z]\\-[A-Z][0-9]{2}.\\-[0-9]{2}$","", skcm_tmb$Tumor_Sample_Barcode)
+metadata$Tumor.Mutation.Burden <- rep("",nrow(metadata))
+metadata$Tumor.Mutation.Burden.Logged <- rep("",nrow(metadata))
+metadata$Tumor.Mutation.Burden.Level <- rep("",nrow(metadata))
+metadata[intersect(rownames(skcm_tmb),rownames(metadata)), "Tumor.Mutation.Burden"] <- skcm_tmb[intersect(rownames(skcm_tmb),rownames(metadata)), "total_perMB"]
+metadata[intersect(rownames(skcm_tmb),rownames(metadata)), "Tumor.Mutation.Burden.Logged"] <- skcm_tmb[intersect(rownames(skcm_tmb),rownames(metadata)), "total_perMB_log"]
+#categorize the TMB Level
+for(rname in rownames(metadata)){
+  if(metadata[rname, "Tumor.Mutation.Burden"] == ""){
+    metadata[rname, "Tumor.Mutation.Burden.Level"] <- "Unknown"
+  }else{
+    tmb <- as.numeric(metadata[rname, "Tumor.Mutation.Burden"])
+    if(tmb <= 5){
+      metadata[rname, "Tumor.Mutation.Burden.Level"] <- "Low_TMB"
+    }else if(tmb > 5 & tmb <20){
+      metadata[rname, "Tumor.Mutation.Burden.Level"] <- "Intermediate_TMB"
+    }else if(tmb >= 20 & tmb <= 50){
+      metadata[rname, "Tumor.Mutation.Burden.Level"] <- "High_TMB"
+    }else if(tmb >= 50){
+      metadata[rname, "Tumor.Mutation.Burden.Level"] <- "Very_high_TMB"
+    }
+  }
+}
+```
 
 
 ### Gene annotation table
@@ -189,6 +232,7 @@ retro.family.table <-  data.frame(
            'L1'),
   stringsAsFactors=F)
 rownames(retro.family.table) <- retro.family.table$family
+te_annot$Group <- retro.family.table[te_annot$Family, "group"]
 ```
 
 ## Filtering
@@ -456,7 +500,8 @@ Filtering
 ### 1. Convert "-" to "Not Applicable" 
 ```{r}
 metadata <- metadata  %>%
-   mutate(across(where(is.character), ~na_if(., "-")))
+  mutate(across(where(is.character), ~na_if(., "-"))) %>% 
+  mutate(across(where(is.character), ~na_if(., "")))
 metadata$RNASEQ.CLUSTER_CONSENHIER[which(is.na(metadata$RNASEQ.CLUSTER_CONSENHIER))] <- "Not Applicable"
 metadata$MethTypes.201408[which(is.na(metadata$MethTypes.201408))] <- "Not Applicable"
 metadata$MIRCluster[which(is.na(metadata$MIRCluster))] <- "Not Applicable"
@@ -468,7 +513,7 @@ metadata$MUTATIONSUBTYPES[which(is.na(metadata$MUTATIONSUBTYPES))] <- "Not Appli
 
 ### 2. Selected samples with complete metadata for unsupervised clustering     
 ```{r}
-mets_selected <- subset(metadata, UV.signature != "Unknown" & Stage != "Unknown" & GENDER != "Unknown" & `CURATED_MELANOMA_SPECIFIC_VITAL_STATUS..0....ALIVE.OR.CENSORED...1....DEAD.OF.MELANOMA..` != "Unknown" & CURATED_TCGA_DAYS_TO_DEATH_OR_LAST_FU != "Unknown" & MUTATIONSUBTYPES != "Unknown")
+mets_selected <- subset(metadata, UV.signature != "Unknown" & Stage != "Unknown" & GENDER != "Unknown" & `CURATED_MELANOMA_SPECIFIC_VITAL_STATUS..0....ALIVE.OR.CENSORED...1....DEAD.OF.MELANOMA..` != "Unknown" & CURATED_TCGA_DAYS_TO_DEATH_OR_LAST_FU != "Unknown" & MUTATIONSUBTYPES != "Unknown" & Tumor.Mutation.Burden.Level!= "Unknown")
 print(paste0("current sample number: ", nrow(mets_selected)))
 ```
 
@@ -601,7 +646,7 @@ for(i in 1:length(cluster_factors_hervs)){
   cluster_col_g[unique(cluster_factors_genes)[i]] <- col_blind_p[i]
   cluster_col_h[unique(cluster_factors_hervs)[i]] <- col_blind_p[i]
 }
-cluster_col_h[c("HERV_Cluster1", "HERV_Cluster2" ,"HERV_Cluster3", "HERV_Cluster4", "HERV_Cluster5")] <- glas32[15:20]
+cluster_col_h[c("HERV_Cluster1", "HERV_Cluster2" ,"HERV_Cluster3", "HERV_Cluster4", "HERV_Cluster5")] <- glas32[15:19]
 feature_col <- c()
 feature_selections <- c("BORUTA and LRT", "BORUTA and LASSO",   "LASSO and LRT" , "All Consensus","LASSO Unique" ,  "BORUTA Unique" ,"LRT Unique")
 for(i in 1:length(unique(feature_selections))){
@@ -613,22 +658,33 @@ herv_sort_cols <- c()
 for(i in 1:length(herv_sort_names)){
   herv_sort_cols[herv_sort_names[i]] <- mix_cols[i]
 }
-org_mix <- c(glas32[21:32], polyc[28:36], dark2, alpha)
+org_mix <- c(polyc[28:36], glas32[21:31], dark2, alpha)
+respond_col <- c()
+respond_fact <- c("CR","PD","PR","SD","Responder","Non_responder","Y","N", "Unknown")
+for(i in 1:length(respond_fact)){
+  respond_col[respond_fact[i]] <- org_mix[i]
+}
 org_col <- c()
 org_clusters <- c(unique(metadata$RNASEQ.CLUSTER_CONSENHIER),unique(metadata$MethTypes.201408), unique(metadata$MIRCluster), unique(metadata$ProteinCluster),unique(metadata$OncoSignCluster),unique(metadata$MUTATIONSUBTYPES), "UV signature","not UV")
 for(i in 1:length(org_clusters)){
-  org_col[org_clusters[i]] <- org_mix[i]
+  org_col[org_clusters[i]] <- org_mix[9+i]
 }
-respond_col <- c()
-respond_fact <- c("CR","PD","PR","SD","UCLA","VIC","TCGA","Y","N")
-for(i in 1:length(respond_fact)){
-  respond_col[respond_fact[i]] <- org_mix[4+i]
-}
+tmb_col <- c("Unknown" = "white",
+             "Low_TMB" = "#f5cce1", 
+             "Intermediate_TMB" = "#eb99c4",
+             "High_TMB" = "#e067a6",
+             "Very_high_TMB" = "#cc016b")
+
+org_col[which(names(org_col) == "Not Applicable")] <- "white"
+org_col[which(names(org_col) == "Unknown")] <- "white"
+herv_sort_cols[which(names(herv_sort_cols) == "unknown")] <- "white"
+respond_col[which(names(respond_col) == "Unknown")] <- "white"
 ```
 
 
 # Data Saving
 ```{r, eval = FALSE}
-save(metadata, mets_selected, te_annot, gene_annot,response_samples, raw_gene, raw_herv, hugo_metadata, hugo_gene, hugo_herv, make_sum, retro.family.table,cluster_col_g,cluster_col_h, feature_col, herv_sort_cols,org_col, respond_col, file = "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/1.count_data.RData")
+save(metadata, mets_selected, te_annot, gene_annot,response_samples, raw_gene, raw_herv, hugo_metadata, hugo_gene, hugo_herv, make_sum, retro.family.table,cluster_col_g,cluster_col_h, feature_col, herv_sort_cols,org_col, respond_col,tmb_col, file = "/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/1.count_data.RData")
+#load("/Users/phoebefei/Desktop/WCM/Mets Melanoma/TCGA SKCM/RData/1.count_data.RData")
 ```
 
